@@ -12,7 +12,7 @@
 > *200 prompts. 4 open-weight models. 4 evaluation dimensions.*
 > *No human labels. Here's what the data showed.*
 
-[Kriterion Dashboard](./docs/screenshots/overview.png)
+![Kriterion Dashboard](./docs/screenshots/overview.png)
 
 ---
 
