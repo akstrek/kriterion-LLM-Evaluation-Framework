@@ -131,7 +131,7 @@ Windows 11 PowerShell · Python 3.11 · Node.js LTS
 ### Eval Harness (Python)
 
 ```powershell
-git clone https://github.com/akstrek/kriterion
+git clone https://github.com/akstrek/kriterion-LLM-Evaluation-Framework.git
 cd kriterion
 python -m venv venv
 .\venv\Scripts\Activate.ps1
