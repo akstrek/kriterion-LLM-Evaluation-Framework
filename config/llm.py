@@ -142,6 +142,9 @@ def get_llm_response(prompt: str, system: str, model: str) -> dict:
                 temperature=0.0,
             )
             latency_ms  = int((time.time() - start) * 1000)
+            if not response.choices:
+                last_exc = ValueError(f"Empty choices in response from {model}")
+                continue
             text        = response.choices[0].message.content or ""
             usage       = response.usage
             tokens_used = usage.total_tokens if usage else 0
@@ -155,8 +158,11 @@ def get_llm_response(prompt: str, system: str, model: str) -> dict:
 
         except RateLimitError as exc:
             if "free-models-per-day" in str(exc).lower():
-                raise DailyQuotaExhausted(str(exc))  # signal batch_eval to exit cleanly
+                raise DailyQuotaExhausted(str(exc))
             last_exc = exc
             continue
 
+    # All retries failed on RateLimitError — quota is exhausted regardless of message format
+    if isinstance(last_exc, RateLimitError):
+        raise DailyQuotaExhausted(f"All retries exhausted on RateLimitError: {last_exc}")
     raise last_exc  # type: ignore[misc]
