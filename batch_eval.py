@@ -17,13 +17,21 @@ import math
 import os
 import sys
 import time
+import urllib.error
+import urllib.request
 
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 from tqdm import tqdm
 
-from config.llm import EVALUATOR_MODELS, JUDGE_MODEL, API_CALL_DELAY, DailyQuotaExhausted
+from config.llm import (
+    API_CALL_DELAY,
+    DailyQuotaExhausted,
+    EVALUATOR_MODELS,
+    JUDGE_MODEL,
+    OPENROUTER_API_KEY,
+)
 from evaluator import run_model, score_response
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
@@ -100,13 +108,21 @@ def load_state() -> dict:
 
 
 def save_state(state: dict) -> None:
+    import time
     os.makedirs(DATA_DIR, exist_ok=True)
     tmp = STATE_PATH + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2)
         f.flush()
         os.fsync(f.fileno())
-    os.replace(tmp, STATE_PATH)
+    for attempt in range(5):
+        try:
+            os.replace(tmp, STATE_PATH)
+            return
+        except PermissionError:
+            if attempt == 4:
+                raise
+            time.sleep(0.2 * (attempt + 1))
 
 
 # ── Prompt I/O ─────────────────────────────────────────────────────────────────
@@ -206,6 +222,42 @@ def save_metadata(state: dict, completed: int, total: int) -> None:
         json.dump(meta, f, indent=2)
 
 
+# ── Credit check ───────────────────────────────────────────────────────────────
+
+def fetch_key_info() -> dict | None:
+    """GET https://openrouter.ai/api/v1/key — returns the `data` payload or None."""
+    if not OPENROUTER_API_KEY:
+        return None
+    req = urllib.request.Request(
+        "https://openrouter.ai/api/v1/key",
+        headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+            return payload.get("data")
+    except (urllib.error.URLError, json.JSONDecodeError, TimeoutError) as exc:
+        print(f"  (credit check failed: {exc})")
+        return None
+
+
+def print_credit_status(label: str, info: dict | None) -> None:
+    if not info:
+        print(f"  {label}: <unavailable>")
+        return
+    usage = info.get("usage")
+    limit = info.get("limit")
+    remaining = (limit - usage) if (limit is not None and usage is not None) else None
+    rate = info.get("rate_limit") or {}
+    print(f"  {label}:")
+    print(f"    usage:     ${usage:.4f}" if usage is not None else "    usage:     <n/a>")
+    print(f"    limit:     ${limit:.4f}" if limit is not None else "    limit:     <unlimited>")
+    if remaining is not None:
+        print(f"    remaining: ${remaining:.4f}")
+    if rate:
+        print(f"    rate_limit:{rate.get('requests')} / {rate.get('interval')}")
+
+
 # ── Daily quota handling ───────────────────────────────────────────────────────
 
 def log_exhaustion_and_schedule_next_run(state: dict) -> None:
@@ -267,6 +319,16 @@ def main() -> None:
     state           = load_state()
     completed_pairs = load_completed_pairs()
 
+    # ── Pre-flight credit check ───────────────────────────────────────────────
+    key_info_start = fetch_key_info()
+    if key_info_start is not None and "credits_at_start" not in state:
+        state["credits_at_start"] = {
+            "usage": key_info_start.get("usage"),
+            "limit": key_info_start.get("limit"),
+            "checked_at": datetime.datetime.utcnow().isoformat(),
+        }
+        save_state(state)
+
     n_models    = len(EVALUATOR_MODELS)
     total_pairs = len(prompts) * n_models
     todo_pairs  = [
@@ -295,6 +357,8 @@ def main() -> None:
     print(f"  Inter-call delay:   {API_CALL_DELAY}s")
     print(f"  Checkpoint:         {STATE_PATH}")
     print(f"  Results:            {PARQUET_PATH}")
+    print()
+    print_credit_status("Credits (pre-flight)", key_info_start)
     print()
 
     if not todo_pairs:
@@ -437,12 +501,23 @@ def _print_completion_summary(state: dict) -> None:
     print(f"  Failures:       {state['total_failures']}")
     print(f"  Days of run:    {state['day_of_run']}")
     print(f"  Provider:       openrouter")
-    print(f"  Cost:           $0.00 (free tier)")
     print(f"  Resume events:  {state['resume_events']}")
     if os.path.exists(FINAL_CSV_PATH):
         print(f"  CSV output:     {FINAL_CSV_PATH}")
     if os.path.exists(METADATA_PATH):
         print(f"  Metadata:       {METADATA_PATH}")
+
+    key_info_end = fetch_key_info()
+    print()
+    print_credit_status("Credits (post-run)", key_info_end)
+
+    start = state.get("credits_at_start") or {}
+    start_usage = start.get("usage")
+    end_usage = (key_info_end or {}).get("usage")
+    if start_usage is not None and end_usage is not None:
+        spent = end_usage - start_usage
+        marker = "  WARNING — non-zero credit spend detected!" if spent > 0.01 else ""
+        print(f"    spent this run: ${spent:.4f}{marker}")
 
 
 if __name__ == "__main__":

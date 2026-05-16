@@ -31,6 +31,19 @@ EVALUATOR_MODELS = [
     "openai/gpt-oss-120b:free",
 ]
 
+
+def _assert_free_only(models: list[str]) -> None:
+    """Hard-fail if any model ID does not end in ':free' — prevents credit burn."""
+    bad = [m for m in models if not m.endswith(":free")]
+    if bad:
+        raise ValueError(
+            f"Non-:free model IDs are forbidden to prevent credit burn: {bad}. "
+            "All evaluator/judge models must end in ':free'."
+        )
+
+
+_assert_free_only(EVALUATOR_MODELS + [JUDGE_MODEL])
+
 API_CALL_DELAY = 4.0  # enforces <15 RPM under OpenRouter 20 RPM limit
 
 JUDGE_SYSTEM_PROMPT = """Score this prompt-response pair. Use full 0.00-1.00 range — most responses score 0.40-0.85, not 1.00.
@@ -140,6 +153,7 @@ def get_llm_response(prompt: str, system: str, model: str) -> dict:
                     {"role": "user",   "content": prompt},
                 ],
                 temperature=0.0,
+                extra_body={"provider": {"allow_fallbacks": False}},
             )
             latency_ms  = int((time.time() - start) * 1000)
             if not response.choices:
