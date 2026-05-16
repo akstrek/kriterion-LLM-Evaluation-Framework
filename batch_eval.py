@@ -17,9 +17,11 @@ import json
 import math
 import os
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import timezone
 
 import numpy as np
@@ -48,11 +50,15 @@ FINAL_CSV_PATH    = os.path.join(DATA_DIR, "eval_results.csv")
 SCHEDULE_BAT      = "schedule_next_run.bat"
 
 # ── Rate / budget constants ────────────────────────────────────────────────────
-DAILY_CALL_BUDGET = 50          # OpenRouter free tier RPD (account-wide)
+# With >=10 OpenRouter credits, :free RPD = 1000. Leave a 50-call safety buffer.
+DAILY_CALL_BUDGET = 950
 CALLS_PER_PAIR    = 2           # 1 eval + 1 judge per (prompt, model) pair
-PAIRS_PER_DAY     = DAILY_CALL_BUDGET // CALLS_PER_PAIR          # 25
-PROMPTS_PER_DAY   = DAILY_CALL_BUDGET // (len(EVALUATOR_MODELS) * CALLS_PER_PAIR)  # 8
+PAIRS_PER_DAY     = DAILY_CALL_BUDGET // CALLS_PER_PAIR
+PROMPTS_PER_DAY   = DAILY_CALL_BUDGET // (len(EVALUATOR_MODELS) * CALLS_PER_PAIR)
 MAX_RETRY         = 3
+# Per-prompt fan-out: run all evaluator models (and then all judges) concurrently.
+# Global 20-RPM token bucket in config/llm.py keeps the OpenRouter ceiling safe.
+PROMPT_WORKERS    = len(EVALUATOR_MODELS)
 
 # ── Parquet schema ─────────────────────────────────────────────────────────────
 _SCHEMA = pa.schema([
@@ -361,6 +367,135 @@ def build_result_row(
     }
 
 
+# ── Per-pair processor (thread-safe) ──────────────────────────────────────────
+
+_STATE_LOCK = threading.Lock()
+
+
+def _pending_key(pid: str, model: str) -> str:
+    return f"{pid}|{model}"
+
+
+def _migrate_legacy_pending(state: dict) -> None:
+    """Convert legacy single 'pending_eval' to keyed 'pending_evals' dict."""
+    if "pending_eval" in state and state["pending_eval"]:
+        pe = state.pop("pending_eval")
+        state.setdefault("pending_evals", {})[_pending_key(pe["prompt_id"], pe["model"])] = pe
+    elif "pending_eval" in state:
+        state.pop("pending_eval", None)
+    state.setdefault("pending_evals", {})
+
+
+class _QuotaSignal(Exception):
+    """Internal signal to break out of the executor on DailyQuotaExhausted."""
+
+
+def process_pair(prompt_obj: dict, model: str, state: dict) -> None:
+    """Run one (prompt, model) pair end-to-end. Thread-safe via _STATE_LOCK
+    for state mutations. Raises _QuotaSignal on DailyQuotaExhausted."""
+    pid = prompt_obj["id"]
+    key = _pending_key(pid, model)
+
+    # Recover checkpointed eval if quota hit mid-judge on a prior run
+    with _STATE_LOCK:
+        pending = state.get("pending_evals", {}).get(key)
+    eval_result = pending if pending else None
+
+    # ── Evaluator ─────────────────────────────────────────────────────────────
+    if eval_result is None:
+        total_attempts = MAX_RETRY + 1
+        for attempt in range(total_attempts):
+            with _STATE_LOCK:
+                state["total_calls"] += 1
+                save_state(state)
+            try:
+                eval_result = run_model(prompt_obj["prompt_text"], model)
+                break
+            except DailyQuotaExhausted:
+                raise _QuotaSignal()
+            except KeyboardInterrupt:
+                raise
+            except Exception as exc:
+                wait = 30 * (attempt + 1)
+                is_last = attempt == total_attempts - 1
+                tqdm.write(
+                    f"[EVAL {attempt+1}/{total_attempts}] {pid}/{model}: {exc}"
+                    + ("  — skipping" if is_last else f"  — retry in {wait}s")
+                )
+                if not is_last:
+                    _interruptible_sleep(wait)
+                else:
+                    append_failed_call({
+                        "prompt_id": pid, "model": model, "stage": "eval",
+                        "error": str(exc),
+                        "timestamp": datetime.datetime.now(timezone.utc).isoformat(),
+                    })
+                    with _STATE_LOCK:
+                        state["total_failures"] += 1
+                        save_state(state)
+                    return
+
+    if eval_result is None:
+        return
+
+    # Checkpoint eval result so a quota hit during judge doesn't waste the eval call
+    with _STATE_LOCK:
+        state.setdefault("pending_evals", {})[key] = {
+            "prompt_id": pid, "model": model,
+            "text": eval_result["text"],
+            "latency_ms": eval_result["latency_ms"],
+            "tokens_used": eval_result["tokens_used"],
+        }
+        save_state(state)
+
+    # ── Judge ─────────────────────────────────────────────────────────────────
+    scores = None
+    total_attempts = MAX_RETRY + 1
+    for attempt in range(total_attempts):
+        with _STATE_LOCK:
+            state["total_calls"] += 1
+            save_state(state)
+        try:
+            scores = score_response(prompt_obj, eval_result["text"])
+            break
+        except DailyQuotaExhausted:
+            raise _QuotaSignal()
+        except KeyboardInterrupt:
+            raise
+        except Exception as exc:
+            wait = 30 * (attempt + 1)
+            is_last = attempt == total_attempts - 1
+            tqdm.write(
+                f"[JUDGE {attempt+1}/{total_attempts}] {pid}/{model}: {exc}"
+                + ("  — skipping" if is_last else f"  — retry in {wait}s")
+            )
+            if not is_last:
+                _interruptible_sleep(wait)
+            else:
+                append_failed_call({
+                    "prompt_id": pid, "model": model, "stage": "judge",
+                    "error": str(exc),
+                    "eval_latency_ms": eval_result["latency_ms"],
+                    "timestamp": datetime.datetime.now(timezone.utc).isoformat(),
+                })
+                with _STATE_LOCK:
+                    state["total_failures"] += 1
+                    save_state(state)
+                return
+
+    if scores is None:
+        return
+
+    # ── Persist ───────────────────────────────────────────────────────────────
+    with _STATE_LOCK:
+        day_of_run = state["day_of_run"]
+    row = build_result_row(prompt_obj, model, eval_result, scores, day_of_run)
+    append_row_to_parquet(row)
+    with _STATE_LOCK:
+        state.get("pending_evals", {}).pop(key, None)
+        save_state(state)
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def _parse_args() -> argparse.Namespace:
@@ -403,10 +538,10 @@ def main() -> None:
 
     # ── Banner ────────────────────────────────────────────────────────────────
     print("\n" + "=" * 70)
-    print("Kriterion Batch Evaluation  —  Sequential Daily Runner")
+    print("Kriterion Batch Evaluation  —  Concurrent Daily Runner")
     print("=" * 70)
     print(f"  Prompts:            {len(prompts)}")
-    print(f"  Models:             {n_models}  (sequential)")
+    print(f"  Models:             {n_models}  (concurrent, {PROMPT_WORKERS} workers)")
     print(f"  Total pairs:        {total_pairs}")
     print(f"  Completed:          {len(completed_pairs)}")
     print(f"  Remaining pairs:    {len(todo_pairs)}")
@@ -445,110 +580,35 @@ def main() -> None:
             print("Aborted.")
             return
 
-    # ── Main loop ─────────────────────────────────────────────────────────────
+    _migrate_legacy_pending(state)
+    save_state(state)
+
+    # ── Main loop — concurrent across (prompt, model) pairs ───────────────────
+    # PROMPT_WORKERS threads pull from the queue; the global 20-RPM token bucket
+    # in config/llm.py is the hard ceiling, and per-provider locks naturally
+    # serialize calls to shared providers (e.g. all judge calls share nvidia/).
     try:
-        with tqdm(total=len(todo_pairs), unit="pair", desc="Evaluating") as pbar:
-            for prompt_obj, model in todo_pairs:
-                pid = prompt_obj["id"]
-
-                # ── Evaluator call ────────────────────────────────────────────
-                # Recover a checkpointed eval result if quota hit mid-judge on the prior run
-                pending = state.get("pending_eval")
-                if pending and pending["prompt_id"] == pid and pending["model"] == model:
-                    eval_result = pending
-                else:
-                    eval_result = None
-                    state.pop("pending_eval", None)
-
-                if eval_result is None:
-                    total_attempts = MAX_RETRY + 1
-                    for attempt in range(total_attempts):
-                        state["total_calls"] += 1  # count attempts — quota counts them too
-                        try:
-                            eval_result = run_model(prompt_obj["prompt_text"], model)
-                            save_state(state)
-                            break
-                        except DailyQuotaExhausted:
-                            save_state(state)
-                            log_exhaustion_and_schedule_next_run(state)
-                            sys.exit(0)
-                        except KeyboardInterrupt:
-                            raise
-                        except Exception as exc:
-                            wait = 30 * (attempt + 1)
-                            is_last = attempt == total_attempts - 1
-                            tqdm.write(
-                                f"[EVAL {attempt+1}/{total_attempts}] {pid}/{model}: {exc}"
-                                + ("  — skipping" if is_last else f"  — retry in {wait}s")
-                            )
-                            if not is_last:
-                                _interruptible_sleep(wait)
-                            else:
-                                append_failed_call({
-                                    "prompt_id": pid, "model": model, "stage": "eval",
-                                    "error": str(exc),
-                                    "timestamp": datetime.datetime.now(timezone.utc).isoformat(),
-                                })
-                                state["total_failures"] += 1
-                                save_state(state)
-
-                if eval_result is None:
-                    pbar.update(1)
-                    continue
-
-                # Checkpoint eval result so a quota hit during judge doesn't waste the eval call
-                state["pending_eval"] = {
-                    "prompt_id": pid, "model": model,
-                    "text": eval_result["text"],
-                    "latency_ms": eval_result["latency_ms"],
-                    "tokens_used": eval_result["tokens_used"],
-                }
-                save_state(state)
-
-                # ── Judge call ────────────────────────────────────────────────
-                scores = None
-                total_attempts = MAX_RETRY + 1
-                for attempt in range(total_attempts):
-                    state["total_calls"] += 1  # count attempts — quota counts them too
+        with tqdm(total=len(todo_pairs), unit="pair", desc="Evaluating") as pbar, \
+             ThreadPoolExecutor(max_workers=PROMPT_WORKERS) as pool:
+            futures = {
+                pool.submit(process_pair, p, m, state): (p["id"], m)
+                for p, m in todo_pairs
+            }
+            try:
+                for fut in as_completed(futures):
                     try:
-                        scores = score_response(prompt_obj, eval_result["text"])
-                        save_state(state)
-                        break
-                    except DailyQuotaExhausted:
-                        save_state(state)
+                        fut.result()
+                    except _QuotaSignal:
+                        # Cancel everything still queued and schedule next run
+                        for f in futures:
+                            f.cancel()
                         log_exhaustion_and_schedule_next_run(state)
                         sys.exit(0)
-                    except KeyboardInterrupt:
-                        raise
-                    except Exception as exc:
-                        wait = 30 * (attempt + 1)
-                        is_last = attempt == total_attempts - 1
-                        tqdm.write(
-                            f"[JUDGE {attempt+1}/{total_attempts}] {pid}/{model}: {exc}"
-                            + ("  — skipping" if is_last else f"  — retry in {wait}s")
-                        )
-                        if not is_last:
-                            _interruptible_sleep(wait)
-                        else:
-                            append_failed_call({
-                                "prompt_id": pid, "model": model, "stage": "judge",
-                                "error": str(exc),
-                                "eval_latency_ms": eval_result["latency_ms"],
-                                "timestamp": datetime.datetime.now(timezone.utc).isoformat(),
-                            })
-                            state["total_failures"] += 1
-                            save_state(state)
-
-                if scores is None:
                     pbar.update(1)
-                    continue
-
-                # ── Persist ───────────────────────────────────────────────────
-                row = build_result_row(prompt_obj, model, eval_result, scores, state["day_of_run"])
-                append_row_to_parquet(row)
-                state.pop("pending_eval", None)
-                save_state(state)
-                pbar.update(1)
+            except KeyboardInterrupt:
+                for f in futures:
+                    f.cancel()
+                raise
 
         # ── Completion ────────────────────────────────────────────────────────
         final_set = load_completed_pairs()

@@ -7,6 +7,7 @@ Per-provider rate limiting is enforced here so callers need no sleep logic.
 Concurrent calls to different providers proceed in parallel; calls to the
 same provider are serialized with a minimum API_CALL_DELAY between them.
 """
+import collections
 import os
 import threading
 import time
@@ -44,7 +45,27 @@ def _assert_free_only(models: list[str]) -> None:
 
 _assert_free_only(EVALUATOR_MODELS + [JUDGE_MODEL])
 
-API_CALL_DELAY = 4.0  # enforces <15 RPM under OpenRouter 20 RPM limit
+API_CALL_DELAY = 4.0  # legacy per-provider min gap (still enforced)
+
+# Global 20-RPM ceiling (OpenRouter :free hard limit). 18/min leaves 10% headroom.
+GLOBAL_RPM_LIMIT = 18
+_RPM_WINDOW_SECONDS = 60.0
+_rpm_lock = threading.Lock()
+_rpm_timestamps: "collections.deque[float]" = collections.deque()
+
+
+def _wait_for_global_rpm() -> None:
+    """Block until a 20-RPM token is available (sliding 60s window)."""
+    while True:
+        with _rpm_lock:
+            now = time.time()
+            while _rpm_timestamps and now - _rpm_timestamps[0] >= _RPM_WINDOW_SECONDS:
+                _rpm_timestamps.popleft()
+            if len(_rpm_timestamps) < GLOBAL_RPM_LIMIT:
+                _rpm_timestamps.append(now)
+                return
+            sleep_for = _RPM_WINDOW_SECONDS - (now - _rpm_timestamps[0]) + 0.05
+        _interruptible_sleep(max(0.1, sleep_for))
 
 JUDGE_SYSTEM_PROMPT = """Score this prompt-response pair. Use full 0.00-1.00 range — most responses score 0.40-0.85, not 1.00.
 factuality: claim accuracy. 1.00=every claim verifiable. 0.85=minor imprecision. 0.60=one wrong claim. 0.30=multiple errors. 0.00=fabricated. null if no factual claims.
@@ -143,6 +164,7 @@ def get_llm_response(prompt: str, system: str, model: str) -> dict:
             _interruptible_sleep(retry_wait)
 
         _wait_for_provider(provider)
+        _wait_for_global_rpm()
 
         try:
             start = time.time()
