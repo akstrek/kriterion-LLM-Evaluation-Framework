@@ -11,6 +11,7 @@ Architecture:
 
 Run: python batch_eval.py
 """
+import argparse
 import datetime
 import json
 import math
@@ -19,6 +20,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from datetime import timezone
 
 import numpy as np
 import pyarrow as pa
@@ -36,6 +38,7 @@ from evaluator import run_model, score_response
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 DATA_DIR          = "data"
+ROWS_DIR          = os.path.join(DATA_DIR, "rows")
 PROMPT_SUITE_PATH = os.path.join("prompts", "prompt_suite.json")
 PARQUET_PATH      = os.path.join(DATA_DIR, "eval_results.parquet")
 STATE_PATH        = os.path.join(DATA_DIR, "eval_state.json")
@@ -99,7 +102,7 @@ def load_state() -> dict:
             "total_failures": 0,
             "resume_events":  0,
             "day_of_run":     1,
-            "started_at":     datetime.datetime.utcnow().isoformat(),
+            "started_at":     datetime.datetime.now(timezone.utc).isoformat(),
             "last_exhausted": None,
             "next_run_utc":   None,
         }
@@ -136,7 +139,15 @@ def load_prompts() -> list[dict]:
 
 # ── Parquet I/O ────────────────────────────────────────────────────────────────
 
-def load_completed_pairs() -> set[tuple[str, str]]:
+def _safe_model_filename(model: str) -> str:
+    return model.replace("/", "__").replace(":", "_")
+
+
+def _row_path(prompt_id: str, model: str) -> str:
+    return os.path.join(ROWS_DIR, f"{prompt_id}__{_safe_model_filename(model)}.parquet")
+
+
+def _read_legacy_pairs() -> set[tuple[str, str]]:
     if not os.path.exists(PARQUET_PATH):
         return set()
     table = pq.read_table(PARQUET_PATH, columns=["prompt_id", "model"])
@@ -144,8 +155,30 @@ def load_completed_pairs() -> set[tuple[str, str]]:
     return set(zip(df["prompt_id"], df["model"]))
 
 
+def load_completed_pairs() -> set[tuple[str, str]]:
+    """Union of legacy single-file parquet and the per-row directory.
+    Reads each row file's prompt_id+model columns directly (filename is opaque)."""
+    pairs = _read_legacy_pairs()
+    if os.path.isdir(ROWS_DIR):
+        for fname in os.listdir(ROWS_DIR):
+            if not fname.endswith(".parquet"):
+                continue
+            try:
+                t = pq.read_table(
+                    os.path.join(ROWS_DIR, fname),
+                    columns=["prompt_id", "model"],
+                )
+                if t.num_rows:
+                    pairs.add((str(t["prompt_id"][0].as_py()),
+                               str(t["model"][0].as_py())))
+            except Exception:
+                continue
+    return pairs
+
+
 def append_row_to_parquet(row: dict) -> None:
-    os.makedirs(DATA_DIR, exist_ok=True)
+    """O(1) per-row write — one parquet file per (prompt_id, model)."""
+    os.makedirs(ROWS_DIR, exist_ok=True)
     record = {
         "prompt_id":             str(row["prompt_id"]),
         "model":                 str(row["model"]),
@@ -167,19 +200,37 @@ def append_row_to_parquet(row: dict) -> None:
         "judge_latency_ms":      int(row["judge_latency_ms"]),
         "judge_tokens_used":     int(row["judge_tokens_used"]),
     }
-    new_table = pa.Table.from_pydict(
+    table = pa.Table.from_pydict(
         {k: [v] for k, v in record.items()},
         schema=_SCHEMA,
     )
-    if os.path.exists(PARQUET_PATH):
-        existing = pq.read_table(PARQUET_PATH)
-        new_table = pa.concat_tables([existing, new_table])
+    final_path = _row_path(record["prompt_id"], record["model"])
+    tmp = final_path + ".tmp"
+    pq.write_table(table, tmp)
+    with open(tmp, "r+b") as f:
+        os.fsync(f.fileno())
+    os.replace(tmp, final_path)
 
+
+def consolidate_rows_to_parquet() -> int:
+    """Concatenate all per-row parquet files (plus legacy file) into PARQUET_PATH.
+    Returns the total row count written."""
+    tables = []
+    if os.path.exists(PARQUET_PATH):
+        tables.append(pq.read_table(PARQUET_PATH))
+    if os.path.isdir(ROWS_DIR):
+        for fname in sorted(os.listdir(ROWS_DIR)):
+            if fname.endswith(".parquet"):
+                tables.append(pq.read_table(os.path.join(ROWS_DIR, fname)))
+    if not tables:
+        return 0
+    combined = pa.concat_tables(tables, promote_options="default")
     tmp = PARQUET_PATH + ".tmp"
-    pq.write_table(new_table, tmp)
+    pq.write_table(combined, tmp)
     with open(tmp, "r+b") as f:
         os.fsync(f.fileno())
     os.replace(tmp, PARQUET_PATH)
+    return combined.num_rows
 
 
 # ── Failed calls log ───────────────────────────────────────────────────────────
@@ -216,7 +267,7 @@ def save_metadata(state: dict, completed: int, total: int) -> None:
         "resume_events":   state["resume_events"],
         "completed_pairs": completed,
         "total_pairs":     total,
-        "completed_at":    datetime.datetime.utcnow().isoformat(),
+        "completed_at":    datetime.datetime.now(timezone.utc).isoformat(),
     }
     with open(METADATA_PATH, "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)
@@ -261,10 +312,10 @@ def print_credit_status(label: str, info: dict | None) -> None:
 # ── Daily quota handling ───────────────────────────────────────────────────────
 
 def log_exhaustion_and_schedule_next_run(state: dict) -> None:
-    reset_utc = (datetime.datetime.utcnow() + datetime.timedelta(days=1)).replace(
+    reset_utc = (datetime.datetime.now(timezone.utc) + datetime.timedelta(days=1)).replace(
         hour=0, minute=1, second=0, microsecond=0
     )
-    state["last_exhausted"] = datetime.datetime.utcnow().isoformat()
+    state["last_exhausted"] = datetime.datetime.now(timezone.utc).isoformat()
     state["next_run_utc"]   = reset_utc.isoformat()
     state["day_of_run"]    += 1
     save_state(state)
@@ -312,7 +363,18 @@ def build_result_row(
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+def _parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Kriterion sequential eval runner")
+    p.add_argument(
+        "-y", "--yes",
+        action="store_true",
+        help="Skip the interactive confirmation (required for Task Scheduler runs).",
+    )
+    return p.parse_args()
+
+
 def main() -> None:
+    args = _parse_args()
     os.makedirs(DATA_DIR, exist_ok=True)
 
     prompts         = load_prompts()
@@ -325,7 +387,7 @@ def main() -> None:
         state["credits_at_start"] = {
             "usage": key_info_start.get("usage"),
             "limit": key_info_start.get("limit"),
-            "checked_at": datetime.datetime.utcnow().isoformat(),
+            "checked_at": datetime.datetime.now(timezone.utc).isoformat(),
         }
         save_state(state)
 
@@ -363,6 +425,7 @@ def main() -> None:
 
     if not todo_pairs:
         print("Nothing to run — all pairs completed.")
+        consolidate_rows_to_parquet()
         if os.path.exists(PARQUET_PATH):
             pq.read_table(PARQUET_PATH).to_pandas().to_csv(FINAL_CSV_PATH, index=False)
             print(f"Final CSV written: {FINAL_CSV_PATH}")
@@ -374,10 +437,13 @@ def main() -> None:
         state["resume_events"] += 1
         save_state(state)
 
-    confirm = input("Proceed? [y/N]: ").strip().lower()
-    if confirm != "y":
-        print("Aborted.")
-        return
+    if args.yes or not sys.stdin.isatty():
+        print("Proceeding without prompt (--yes or non-interactive stdin).")
+    else:
+        confirm = input("Proceed? [y/N]: ").strip().lower()
+        if confirm != "y":
+            print("Aborted.")
+            return
 
     # ── Main loop ─────────────────────────────────────────────────────────────
     try:
@@ -395,30 +461,33 @@ def main() -> None:
                     state.pop("pending_eval", None)
 
                 if eval_result is None:
-                    for attempt in range(MAX_RETRY + 1):
+                    total_attempts = MAX_RETRY + 1
+                    for attempt in range(total_attempts):
+                        state["total_calls"] += 1  # count attempts — quota counts them too
                         try:
                             eval_result = run_model(prompt_obj["prompt_text"], model)
-                            state["total_calls"] += 1
                             save_state(state)
                             break
                         except DailyQuotaExhausted:
+                            save_state(state)
                             log_exhaustion_and_schedule_next_run(state)
                             sys.exit(0)
                         except KeyboardInterrupt:
                             raise
                         except Exception as exc:
                             wait = 30 * (attempt + 1)
+                            is_last = attempt == total_attempts - 1
                             tqdm.write(
-                                f"[EVAL {attempt+1}/{MAX_RETRY}] {pid}/{model}: {exc}"
-                                + (f"  — retry in {wait}s" if attempt < MAX_RETRY else "  — skipping")
+                                f"[EVAL {attempt+1}/{total_attempts}] {pid}/{model}: {exc}"
+                                + ("  — skipping" if is_last else f"  — retry in {wait}s")
                             )
-                            if attempt < MAX_RETRY:
+                            if not is_last:
                                 _interruptible_sleep(wait)
                             else:
                                 append_failed_call({
                                     "prompt_id": pid, "model": model, "stage": "eval",
                                     "error": str(exc),
-                                    "timestamp": datetime.datetime.utcnow().isoformat(),
+                                    "timestamp": datetime.datetime.now(timezone.utc).isoformat(),
                                 })
                                 state["total_failures"] += 1
                                 save_state(state)
@@ -438,31 +507,34 @@ def main() -> None:
 
                 # ── Judge call ────────────────────────────────────────────────
                 scores = None
-                for attempt in range(MAX_RETRY + 1):
+                total_attempts = MAX_RETRY + 1
+                for attempt in range(total_attempts):
+                    state["total_calls"] += 1  # count attempts — quota counts them too
                     try:
                         scores = score_response(prompt_obj, eval_result["text"])
-                        state["total_calls"] += 1
                         save_state(state)
                         break
                     except DailyQuotaExhausted:
+                        save_state(state)
                         log_exhaustion_and_schedule_next_run(state)
                         sys.exit(0)
                     except KeyboardInterrupt:
                         raise
                     except Exception as exc:
                         wait = 30 * (attempt + 1)
+                        is_last = attempt == total_attempts - 1
                         tqdm.write(
-                            f"[JUDGE {attempt+1}/{MAX_RETRY}] {pid}/{model}: {exc}"
-                            + (f"  — retry in {wait}s" if attempt < MAX_RETRY else "  — skipping")
+                            f"[JUDGE {attempt+1}/{total_attempts}] {pid}/{model}: {exc}"
+                            + ("  — skipping" if is_last else f"  — retry in {wait}s")
                         )
-                        if attempt < MAX_RETRY:
+                        if not is_last:
                             _interruptible_sleep(wait)
                         else:
                             append_failed_call({
                                 "prompt_id": pid, "model": model, "stage": "judge",
                                 "error": str(exc),
                                 "eval_latency_ms": eval_result["latency_ms"],
-                                "timestamp": datetime.datetime.utcnow().isoformat(),
+                                "timestamp": datetime.datetime.now(timezone.utc).isoformat(),
                             })
                             state["total_failures"] += 1
                             save_state(state)
@@ -484,6 +556,7 @@ def main() -> None:
             1 for p, m in todo_pairs
             if (p["id"], m) in final_set
         )
+        consolidate_rows_to_parquet()
         if os.path.exists(PARQUET_PATH):
             pq.read_table(PARQUET_PATH).to_pandas().to_csv(FINAL_CSV_PATH, index=False)
 
