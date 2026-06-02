@@ -1,16 +1,27 @@
 """
 config/llm.py
-Single entry point for all LLM calls via OpenRouter (OpenAI-compatible SDK).
-All evaluator calls and judge calls route through get_llm_response().
+Single LLM entry point for Kriterion.
 
-Per-provider rate limiting is enforced here so callers need no sleep logic.
-Concurrent calls to different providers proceed in parallel; calls to the
-same provider are serialized with a minimum API_CALL_DELAY between them.
+Public surface:
+    call_model(model_id, messages, role) -> CallResult
+    htb_status() -> dict
+    CallResult dataclass
+    EVALUATOR_MODELS, JUDGE_MODEL, EVALUATOR_SYSTEM_PROMPT, JUDGE_SYSTEM_PROMPT
+    DailyQuotaExhausted exception
+    OPENROUTER_API_KEY (for downstream credit-check helpers)
+
+Internal: HTB tree (root + provider children) with continuous token refill,
+full sibling borrowing up to root ceil, per-provider daily budgets, and an
+adaptive throttle that halves root rate for 5 min when trailing 429 rate >30%.
 """
+from __future__ import annotations
+
 import collections
 import os
 import threading
 import time
+from dataclasses import dataclass, field
+from typing import Literal
 
 from dotenv import load_dotenv
 from openai import OpenAI, RateLimitError
@@ -24,17 +35,26 @@ if not OPENROUTER_API_KEY:
         "Create a .env file with: OPENROUTER_API_KEY=your_key_here"
     )
 
+# ── Models ───────────────────────────────────────────────────────────────────
+
 JUDGE_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
 
 EVALUATOR_MODELS = [
-    "minimax/minimax-m2.5:free",
-    "openai/gpt-oss-20b:free",
+    "moonshotai/kimi-k2.6:free",
+    "google/gemma-4-31b-it:free",
     "openai/gpt-oss-120b:free",
 ]
 
+# Primary -> fallback (both ':free'-enforced)
+FALLBACK_MAP: dict[str, str] = {
+    "moonshotai/kimi-k2.6:free":                "google/gemma-4-26b-a4b-it:free",
+    "google/gemma-4-31b-it:free":               "openai/gpt-oss-20b:free",
+    "openai/gpt-oss-120b:free":                 "google/gemma-4-31b-it:free",
+    "nvidia/nemotron-3-super-120b-a12b:free":   "nvidia/nemotron-3-nano-30b-a3b:free",
+}
+
 
 def _assert_free_only(models: list[str]) -> None:
-    """Hard-fail if any model ID does not end in ':free' — prevents credit burn."""
     bad = [m for m in models if not m.endswith(":free")]
     if bad:
         raise ValueError(
@@ -43,29 +63,15 @@ def _assert_free_only(models: list[str]) -> None:
         )
 
 
-_assert_free_only(EVALUATOR_MODELS + [JUDGE_MODEL])
-
-API_CALL_DELAY = 4.0  # legacy per-provider min gap (still enforced)
-
-# Global 20-RPM ceiling (OpenRouter :free hard limit). 18/min leaves 10% headroom.
-GLOBAL_RPM_LIMIT = 18
-_RPM_WINDOW_SECONDS = 60.0
-_rpm_lock = threading.Lock()
-_rpm_timestamps: "collections.deque[float]" = collections.deque()
+_assert_free_only(
+    EVALUATOR_MODELS
+    + [JUDGE_MODEL]
+    + list(FALLBACK_MAP.keys())
+    + list(FALLBACK_MAP.values())
+)
 
 
-def _wait_for_global_rpm() -> None:
-    """Block until a 20-RPM token is available (sliding 60s window)."""
-    while True:
-        with _rpm_lock:
-            now = time.time()
-            while _rpm_timestamps and now - _rpm_timestamps[0] >= _RPM_WINDOW_SECONDS:
-                _rpm_timestamps.popleft()
-            if len(_rpm_timestamps) < GLOBAL_RPM_LIMIT:
-                _rpm_timestamps.append(now)
-                return
-            sleep_for = _RPM_WINDOW_SECONDS - (now - _rpm_timestamps[0]) + 0.05
-        _interruptible_sleep(max(0.1, sleep_for))
+# ── Prompts ──────────────────────────────────────────────────────────────────
 
 JUDGE_SYSTEM_PROMPT = """Score this prompt-response pair. Use full 0.00-1.00 range — most responses score 0.40-0.85, not 1.00.
 factuality: claim accuracy. 1.00=every claim verifiable. 0.85=minor imprecision. 0.60=one wrong claim. 0.30=multiple errors. 0.00=fabricated. null if no factual claims.
@@ -83,122 +89,411 @@ EVALUATOR_SYSTEM_PROMPT = (
     "Do not add disclaimers, caveats, or meta-commentary about your response."
 )
 
+
+# ── Public result type ───────────────────────────────────────────────────────
+
+@dataclass
+class CallResult:
+    text: str
+    latency_ms: int
+    tokens_used: int
+    model_used: str
+    fallback_triggered: bool = False
+    retry_count: int = 0
+    parse_error: str | None = None
+
+
+class DailyQuotaExhausted(Exception):
+    """Raised when the HTB daily budget on the relevant leaf is exhausted."""
+
+
+# ── HTB tree ─────────────────────────────────────────────────────────────────
+
+# Per-provider HTB guarantees (req/sec). Feeds _split_eval_budget() for the
+# 650 RPD eval allocation; on a leaf the rate is currently slack since
+# ceil_per_sec == root rate (any leaf can fully borrow), so these values
+# primarily weight the daily-budget split, not runtime throughput.
+#
+# Eval weights: equal across the three eval lanes by default so DRR's
+# round-robin per-model dispatch isn't bottlenecked by a tiny leaf while
+# another leaf sits on hundreds of RPD of surplus. google carries double
+# weight because two other lanes' fallback hops (kimi -> gemma-4-26b,
+# gpt-oss-120b -> gemma-4-31b) land on google's leaf, so it needs headroom
+# for its own primary calls + inbound fallback traffic.
+# nvidia is judge-only; its budget comes from _JUDGE_RPD, not this split.
+_PROVIDER_RATES: dict[str, float] = {
+    "nvidia":     0.10,
+    "openai":     0.05,
+    "moonshotai": 0.05,
+    "google":     0.10,
+}
+
+_ROOT_RATE      = 0.3      # 18 RPM (steady-state refill)
+_ROOT_CEIL      = 0.3      # max effective rate when borrowing (metadata)
+_NODE_BURST     = 5.0      # bucket capacity in permits — allows brief catch-up
+_THROTTLED_RATE = 0.15
+_ROOT_RPD       = 950
+_EVAL_RPD       = 650
+_JUDGE_RPD      = 300
+
+_EVAL_PROVIDERS = ("openai", "moonshotai", "google")
+
+
+def _split_eval_budget() -> dict[str, int]:
+    """Distribute EVAL_RPD across evaluator providers proportionally to guarantees.
+    Providers with zero guarantee get zero budget."""
+    weights = {p: _PROVIDER_RATES[p] for p in _EVAL_PROVIDERS}
+    total_w = sum(weights.values())
+    if total_w <= 0:
+        return {p: 0 for p in _EVAL_PROVIDERS}
+    raw = {p: _EVAL_RPD * w / total_w for p, w in weights.items()}
+    out = {p: int(raw[p]) for p in _EVAL_PROVIDERS}
+    # Hand any rounding remainder to the highest-weight provider.
+    leftover = _EVAL_RPD - sum(out.values())
+    if leftover > 0:
+        top = max(_EVAL_PROVIDERS, key=lambda p: weights[p])
+        out[top] += leftover
+    return out
+
+
+@dataclass
+class HTBNode:
+    name: str
+    rate_per_sec: float
+    ceil_per_sec: float                     # max effective rate when borrowing (metadata)
+    daily_budget: int                       # initial cap (for reset_daily)
+    burst: float = _NODE_BURST              # bucket capacity in permits
+    parent: "HTBNode | None" = None
+    children: list["HTBNode"] = field(default_factory=list)
+    tokens: float = 0.0
+    last_refill: float = 0.0
+    daily_remaining: int = 0
+
+    def __post_init__(self) -> None:
+        self.tokens = self.burst
+        self.last_refill = time.monotonic()
+        self.daily_remaining = self.daily_budget
+        if self.parent is not None:
+            self.parent.children.append(self)
+
+    def refill(self) -> None:
+        now = time.monotonic()
+        elapsed = now - self.last_refill
+        if elapsed <= 0:
+            return
+        self.tokens = min(self.burst, self.tokens + elapsed * self.rate_per_sec)
+        self.last_refill = now
+
+    def path_to_root(self) -> list["HTBNode"]:
+        path: list[HTBNode] = []
+        n: HTBNode | None = self
+        while n is not None:
+            path.append(n)
+            n = n.parent
+        return path
+
+    def reset_daily(self) -> None:
+        self.daily_remaining = self.daily_budget
+        for c in self.children:
+            c.reset_daily()
+
+
+class HTBTree:
+    """Hierarchical token bucket: root → provider leaves. Single tree-wide lock."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.root = HTBNode(
+            name="root",
+            rate_per_sec=_ROOT_RATE,
+            ceil_per_sec=_ROOT_CEIL,
+            daily_budget=_ROOT_RPD,
+        )
+        eval_budgets = _split_eval_budget()
+        provider_budgets = dict(eval_budgets)
+        provider_budgets["nvidia"] = _JUDGE_RPD     # nvidia is judge-only
+
+        self.providers: dict[str, HTBNode] = {}
+        for name, rate in _PROVIDER_RATES.items():
+            self.providers[name] = HTBNode(
+                name=name,
+                rate_per_sec=rate,
+                ceil_per_sec=_ROOT_CEIL,
+                daily_budget=provider_budgets.get(name, 0),
+                parent=self.root,
+            )
+
+    # ── core ops (caller must hold self.lock) ────────────────────────────────
+
+    def _try_acquire_locked(self, provider: str) -> tuple[bool, float, bool]:
+        """Returns (acquired, wait_seconds, daily_exhausted)."""
+        leaf = self.providers.get(provider)
+        if leaf is None:
+            raise ValueError(f"Unknown provider: {provider}")
+        path = leaf.path_to_root()
+        for n in path:
+            n.refill()
+        # Daily exhaustion is hard: caller must back off until reset.
+        if any(n.daily_remaining <= 0 for n in path):
+            return False, 0.0, True
+        if all(n.tokens >= 1.0 for n in path):
+            for n in path:
+                n.tokens -= 1.0
+                n.daily_remaining -= 1
+            return True, 0.0, False
+        # Worst-case wait among under-supplied nodes.
+        waits = []
+        for n in path:
+            if n.tokens >= 1.0:
+                continue
+            if n.rate_per_sec <= 0:
+                # No rate guarantee — only borrowing can save us; back off and retry.
+                waits.append(1.0)
+            else:
+                waits.append((1.0 - n.tokens) / n.rate_per_sec)
+        return False, max(waits) if waits else 0.1, False
+
+    # ── public ops ───────────────────────────────────────────────────────────
+
+    def acquire(self, provider: str) -> None:
+        """Block until 1 token is available leaf→root and daily budgets allow it.
+        Raises DailyQuotaExhausted if any node on the path is daily-exhausted."""
+        while True:
+            with self.lock:
+                ok, wait, exhausted = self._try_acquire_locked(provider)
+            if exhausted:
+                raise DailyQuotaExhausted(
+                    f"HTB daily budget exhausted on path to provider '{provider}'."
+                )
+            if ok:
+                return
+            _interruptible_sleep(min(max(wait, 0.05), 5.0))
+
+    def reset_daily(self) -> None:
+        with self.lock:
+            self.root.reset_daily()
+
+    def snapshot(self) -> dict:
+        with self.lock:
+            for n in [self.root, *self.providers.values()]:
+                n.refill()
+            return {
+                "root": {
+                    "rate_per_sec": self.root.rate_per_sec,
+                    "ceil_per_sec": self.root.ceil_per_sec,
+                    "tokens": round(self.root.tokens, 3),
+                    "daily_remaining": self.root.daily_remaining,
+                    "daily_budget": self.root.daily_budget,
+                },
+                "providers": {
+                    name: {
+                        "rate_per_sec": n.rate_per_sec,
+                        "tokens": round(n.tokens, 3),
+                        "daily_remaining": n.daily_remaining,
+                        "daily_budget": n.daily_budget,
+                    }
+                    for name, n in self.providers.items()
+                },
+            }
+
+
+# ── Adaptive throttle ────────────────────────────────────────────────────────
+
+class AdaptiveThrottle:
+    """Halves root rate for 5 min when trailing-60s 429 rate exceeds 30%."""
+
+    THROTTLE_WINDOW   = 60.0
+    THROTTLE_TRIGGER  = 0.30
+    COOLDOWN_SECS     = 300.0
+    MIN_SAMPLE        = 5
+
+    def __init__(self, tree: HTBTree) -> None:
+        self.tree = tree
+        self.events: collections.deque[tuple[float, bool]] = collections.deque()
+        self.lock = threading.Lock()
+        self.normal_rate = _ROOT_RATE
+        self.throttled_rate = _THROTTLED_RATE
+        self.cooldown_until: float = 0.0
+        self._is_throttled = False
+
+    def record(self, was_429: bool) -> None:
+        now = time.monotonic()
+        with self.lock:
+            self.events.append((now, was_429))
+            cutoff = now - self.THROTTLE_WINDOW
+            while self.events and self.events[0][0] < cutoff:
+                self.events.popleft()
+
+            # Restore if cooldown expired.
+            if self._is_throttled and now >= self.cooldown_until:
+                with self.tree.lock:
+                    self.tree.root.rate_per_sec = self.normal_rate
+                self._is_throttled = False
+                self.cooldown_until = 0.0
+                print(f"[adaptive] cooldown elapsed — root rate restored to {self.normal_rate}/s",
+                      flush=True)
+
+            # Engage throttle on sustained 429s.
+            if not self._is_throttled and len(self.events) >= self.MIN_SAMPLE:
+                rate_429 = sum(1 for _, e in self.events if e) / len(self.events)
+                if rate_429 > self.THROTTLE_TRIGGER:
+                    with self.tree.lock:
+                        self.tree.root.rate_per_sec = self.throttled_rate
+                    self._is_throttled = True
+                    self.cooldown_until = now + self.COOLDOWN_SECS
+                    print(
+                        f"[adaptive] 429 rate {rate_429:.1%} > 30% — "
+                        f"root rate halved to {self.throttled_rate}/s for "
+                        f"{int(self.COOLDOWN_SECS)}s",
+                        flush=True,
+                    )
+
+
+# ── Module-level singletons ──────────────────────────────────────────────────
+
+_HTB = HTBTree()
+_THROTTLE = AdaptiveThrottle(_HTB)
+
 _client = OpenAI(
     api_key=OPENROUTER_API_KEY,
     base_url="https://openrouter.ai/api/v1",
 )
 
-# ── Per-provider rate limiting ────────────────────────────────────────────────
-_registry_lock:   threading.Lock             = threading.Lock()
-_provider_locks:  dict[str, threading.Lock]  = {}
-_last_call_time:  dict[str, float]           = {}
-
-_RETRY_DELAYS = [10, 30, 60, 120]
-
-
-def _get_provider(model_id: str) -> str:
-    return model_id.split("/")[0]
+MAX_RETRY = 3              # initial attempt + 2 retries — rides ~2 min upstream throttle
+_RETRY_DELAYS = [30, 90]   # delays before retry #1 and retry #2
 
 
 def _interruptible_sleep(seconds: float) -> None:
-    """Sleep in 0.5 s chunks so KeyboardInterrupt fires promptly."""
     end = time.time() + seconds
     while time.time() < end:
         time.sleep(min(0.5, end - time.time()))
 
 
-def _wait_for_provider(provider: str) -> None:
+def _provider_of(model_id: str) -> str:
+    return model_id.split("/")[0]
+
+
+# ── Call orchestration ───────────────────────────────────────────────────────
+
+def _attempt_one(model_id: str, messages: list, *, tree: HTBTree = _HTB,
+                 throttle: AdaptiveThrottle = _THROTTLE,
+                 client: OpenAI | None = None) -> tuple[CallResult | None, Exception | None, bool]:
+    """One HTB-gated request. Returns (result, exception, was_429).
+    Decrements daily budget on entry via acquire()."""
+    provider = _provider_of(model_id)
+    tree.acquire(provider)   # may raise DailyQuotaExhausted
+    cli = client if client is not None else _client
+    try:
+        t0 = time.time()
+        response = cli.chat.completions.create(
+            model=model_id,
+            messages=messages,
+            temperature=0.0,
+            extra_body={"provider": {"allow_fallbacks": False}},
+        )
+        latency_ms = int((time.time() - t0) * 1000)
+        if not response.choices:
+            return None, ValueError(f"Empty choices from {model_id}"), False
+        text = response.choices[0].message.content or ""
+        usage = response.usage
+        tokens_used = usage.total_tokens if usage else 0
+        throttle.record(False)
+        return (
+            CallResult(
+                text=text,
+                latency_ms=latency_ms,
+                tokens_used=tokens_used,
+                model_used=model_id,
+            ),
+            None,
+            False,
+        )
+    except RateLimitError as exc:
+        throttle.record(True)
+        # OpenRouter's daily-cap signal is surfaced as a 429 with a specific body.
+        if "free-models-per-day" in str(exc).lower():
+            return None, DailyQuotaExhausted(str(exc)), True
+        return None, exc, True
+    except Exception as exc:  # noqa: BLE001 - any network/SDK error
+        throttle.record(False)
+        return None, exc, False
+
+
+def call_model(
+    model_id: str,
+    messages: list,
+    role: Literal["evaluator", "judge"],
+    *,
+    tree: HTBTree = _HTB,
+    throttle: AdaptiveThrottle = _THROTTLE,
+    client: OpenAI | None = None,
+) -> CallResult:
+    """Single LLM call with HTB rate limiting, retries, and one fallback hop.
+
+    - role is recorded for telemetry; HTB sub-budgets are enforced by provider.
+    - Retries: MAX_RETRY total attempts on the primary model (initial + 1).
+    - Fallback: on primary exhaustion, one attempt on FALLBACK_MAP[model_id]
+      (if defined). The fallback call also passes through HTB acquire on its
+      own provider.
+    - Raises DailyQuotaExhausted if HTB reports any path daily-exhausted.
     """
-    Ensure at least API_CALL_DELAY seconds between consecutive calls to the
-    same provider. Calls to different providers proceed without blocking.
-    """
-    with _registry_lock:
-        if provider not in _provider_locks:
-            _provider_locks[provider] = threading.Lock()
-            _last_call_time[provider] = 0.0
+    _assert_free_only([model_id])
+    if role not in ("evaluator", "judge"):
+        raise ValueError(f"role must be 'evaluator' or 'judge', got {role!r}")
 
-    with _provider_locks[provider]:
-        elapsed = time.time() - _last_call_time[provider]
-        if elapsed < API_CALL_DELAY:
-            _interruptible_sleep(API_CALL_DELAY - elapsed)
-        _last_call_time[provider] = time.time()
-
-
-class DailyQuotaExhausted(Exception):
-    """Raised when OpenRouter free daily quota is exhausted."""
-    pass
-
-# ── Public call function ──────────────────────────────────────────────────────
-
-def get_llm_response(prompt: str, system: str, model: str) -> dict:
-    """
-    Send a prompt to any model via OpenRouter.
-
-    - Enforces per-provider rate limiting before every attempt.
-    - Retries up to 4 times on 429 with exponential back-off.
-    - Uses interruptible sleeps so Ctrl-C is caught within 0.5 s.
-
-    Returns:
-        {
-            "text":        str,
-            "latency_ms":  int,
-            "tokens_used": int,
-            "cost_usd":    float,   # 0.0 for :free tier models
-        }
-
-    Raises:
-        KeyboardInterrupt — propagated immediately from any sleep.
-        RateLimitError    — if all retry attempts are exhausted.
-        Exception         — any other OpenAI/network error.
-    """
-    provider = _get_provider(model)
     last_exc: Exception | None = None
+    retry_count = 0
 
-    for attempt, retry_wait in enumerate([0] + _RETRY_DELAYS):
-        if retry_wait:
-            print(
-                f"  [429] {model} — waiting {retry_wait}s "
-                f"before retry {attempt}/{len(_RETRY_DELAYS)} ...",
-                flush=True,
-            )
-            _interruptible_sleep(retry_wait)
-
-        _wait_for_provider(provider)
-        _wait_for_global_rpm()
+    for attempt in range(MAX_RETRY):
+        if attempt > 0:
+            delay = _RETRY_DELAYS[min(attempt - 1, len(_RETRY_DELAYS) - 1)]
+            _interruptible_sleep(delay)
 
         try:
-            start = time.time()
-            response = _client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user",   "content": prompt},
-                ],
-                temperature=0.0,
-                extra_body={"provider": {"allow_fallbacks": False}},
+            result, exc, _ = _attempt_one(
+                model_id, messages, tree=tree, throttle=throttle, client=client,
             )
-            latency_ms  = int((time.time() - start) * 1000)
-            if not response.choices:
-                last_exc = ValueError(f"Empty choices in response from {model}")
-                continue
-            text        = response.choices[0].message.content or ""
-            usage       = response.usage
-            tokens_used = usage.total_tokens if usage else 0
+        except DailyQuotaExhausted:
+            # Primary's path is daily-exhausted: try fallback once if available.
+            break
 
-            return {
-                "text":        text,
-                "latency_ms":  latency_ms,
-                "tokens_used": tokens_used,
-                "cost_usd":    0.0,
-            }
+        if result is not None:
+            result.retry_count = retry_count
+            return result
 
-        except RateLimitError as exc:
-            if "free-models-per-day" in str(exc).lower():
-                raise DailyQuotaExhausted(str(exc))
+        last_exc = exc
+        retry_count += 1
+        if isinstance(exc, DailyQuotaExhausted):
+            break  # don't waste another retry on daily exhaustion
+
+    # ── Fallback hop ─────────────────────────────────────────────────────────
+    fb_id = FALLBACK_MAP.get(model_id)
+    if fb_id is not None:
+        try:
+            result, exc, _ = _attempt_one(
+                fb_id, messages, tree=tree, throttle=throttle, client=client,
+            )
+            if result is not None:
+                result.fallback_triggered = True
+                result.retry_count = retry_count
+                return result
+            last_exc = exc or last_exc
+        except DailyQuotaExhausted as exc:
             last_exc = exc
-            continue
 
-    # All retries failed on RateLimitError — quota is exhausted regardless of message format
-    if isinstance(last_exc, RateLimitError):
-        raise DailyQuotaExhausted(f"All retries exhausted on RateLimitError: {last_exc}")
-    raise last_exc  # type: ignore[misc]
+    if isinstance(last_exc, DailyQuotaExhausted):
+        raise last_exc
+    if last_exc is None:
+        last_exc = RuntimeError(f"call_model exhausted without exception on {model_id}")
+    raise last_exc
+
+
+def htb_status() -> dict:
+    """Snapshot of HTB tree state — for telemetry, eval_state.json, smoke tests."""
+    snap = _HTB.snapshot()
+    snap["adaptive"] = {
+        "throttled": _THROTTLE._is_throttled,
+        "current_root_rate": _HTB.root.rate_per_sec,
+        "cooldown_until_monotonic": _THROTTLE.cooldown_until,
+    }
+    return snap

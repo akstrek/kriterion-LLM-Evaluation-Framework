@@ -2,12 +2,22 @@
 evaluator.py
 Two public functions used by batch_eval.py and testable standalone.
 
-  run_model(prompt_text, model)  → dict   {"text", "latency_ms", "tokens_used", "cost_usd"}
+  run_model(prompt_text, model)         → CallResult
   score_response(prompt_obj, response_text) → dict
 
+Both now route through config.llm.call_model(..., role=...). Empty/unparseable
+judge responses produce NaN on ALL FOUR dimensions and set judge_empty=True
+(no 0.0 defaults anywhere).
+
 Standalone test:
-  python evaluator.py            — runs all 3 prompts × all evaluator models
-  python evaluator.py --sample 2 — runs first 2 prompts × all evaluator models
+  python evaluator.py                       — eval + judge over SAMPLE_PROMPTS × EVALUATOR_MODELS
+                                              (12 API calls; hits real API)
+  python evaluator.py --probe-fallbacks     — direct ping to every FALLBACK_MAP value
+                                              (1 call per unique fallback model — 4 calls total).
+                                              Use this to confirm gemma / nemotron-nano are
+                                              actually reachable before a full run, since the
+                                              fallback path only fires after MAX_RETRY=2 primary
+                                              failures and is otherwise hard to exercise.
 """
 import argparse
 import json
@@ -18,96 +28,107 @@ import numpy as np
 from config.llm import (
     EVALUATOR_MODELS,
     EVALUATOR_SYSTEM_PROMPT,
+    FALLBACK_MAP,
     JUDGE_MODEL,
     JUDGE_SYSTEM_PROMPT,
-    get_llm_response,
+    CallResult,
+    call_model,
 )
 
 EXPECTED_SCORE_KEYS = {"factuality", "reasoning", "instruction_following", "format_compliance"}
 
 
-def run_model(prompt_text: str, model: str) -> dict:
-    """
-    Send prompt_text to an evaluator model.
-
-    Returns the full result dict from get_llm_response:
-        {"text", "latency_ms", "tokens_used", "cost_usd"}
-    """
-    return get_llm_response(
-        prompt=prompt_text,
-        system=EVALUATOR_SYSTEM_PROMPT,
-        model=model,
-    )
+def run_model(prompt_text: str, model: str) -> CallResult:
+    """Send prompt_text to an evaluator model via call_model."""
+    messages = [
+        {"role": "system", "content": EVALUATOR_SYSTEM_PROMPT},
+        {"role": "user",   "content": prompt_text},
+    ]
+    return call_model(model_id=model, messages=messages, role="evaluator")
 
 
 def score_response(prompt_obj: dict, response_text: str) -> dict:
-    """
-    Send (original prompt + model response) to the NVIDIA: Nemotron 3 Super judge.
-    Both are truncated before sending: response capped at 1500 chars (~375 tokens),
-    prompt_text capped at 500 chars.
-
-    prompt_obj must have at least: {"prompt_text": str}
+    """Send (original prompt + model response) to the judge.
 
     Returns:
         {
-            "factuality":            float | nan,   # nan when not applicable
-            "reasoning":             float | nan,   # nan when not applicable
-            "instruction_following": float,
-            "format_compliance":     float,
-            "overall_score":         float,         # nanmean of non-null dims
+            "factuality":            float | nan,
+            "reasoning":             float | nan,
+            "instruction_following": float | nan,   # NaN on empty/unparseable judge
+            "format_compliance":     float | nan,   # NaN on empty/unparseable judge
+            "overall_applicable":    float | nan,   # nanmean of present dims
             "judge_latency_ms":      int,
             "judge_tokens_used":     int,
+            "judge_model":           str,
+            "judge_empty":           bool,
+            "fallback_triggered":    bool,
+            "retry_count":           int,
             "parse_error":           str | None,
         }
     """
     response_truncated = response_text[:1500]
     prompt_text = f"Prompt: {prompt_obj['prompt_text'][:500]}\n\nResponse: {response_truncated}"
 
-    judge_prompt = prompt_text
+    messages = [
+        {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
+        {"role": "user",   "content": prompt_text},
+    ]
+    result: CallResult = call_model(model_id=JUDGE_MODEL, messages=messages, role="judge")
 
-    result = get_llm_response(
-        prompt=judge_prompt,
-        system=JUDGE_SYSTEM_PROMPT,
-        model=JUDGE_MODEL,
-    )
-
-    scores = {
-        "factuality":            float("nan"),  # nullable per judge schema
-        "reasoning":             float("nan"),  # nullable per judge schema
-        "instruction_following": 0.0,
-        "format_compliance":     0.0,
-        "overall_score":         float("nan"),
-        "judge_latency_ms":      result["latency_ms"],
-        "judge_tokens_used":     result["tokens_used"],
+    scores: dict = {
+        "factuality":            float("nan"),
+        "reasoning":             float("nan"),
+        "instruction_following": float("nan"),
+        "format_compliance":     float("nan"),
+        "overall_applicable":    float("nan"),
+        "judge_latency_ms":      result.latency_ms,
+        "judge_tokens_used":     result.tokens_used,
+        "judge_model":           result.model_used,
+        "judge_empty":           False,
+        "fallback_triggered":    result.fallback_triggered,
+        "retry_count":           result.retry_count,
         "parse_error":           None,
     }
 
-    if not result["text"].strip():
-        print(f"  [WARN] Judge returned empty response for prompt {prompt_obj.get('id', '?')}")
+    raw_text = (result.text or "").strip()
+    if not raw_text:
+        scores["judge_empty"] = True
         scores["parse_error"] = "Empty judge response"
         return scores
 
-    raw = result["text"].strip()
-    # Strip markdown fences if the judge wraps them anyway
+    # Strip ``` and ```json fences if present.
+    raw = raw_text
     if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-        raw = raw.strip()
+        parts = raw.split("```")
+        if len(parts) >= 2:
+            raw = parts[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+            raw = raw.strip()
 
     try:
         parsed = json.loads(raw)
-        for key in EXPECTED_SCORE_KEYS:
-            if key in parsed:
-                val = parsed[key]
-                scores[key] = float("nan") if val is None else float(val)
-            else:
-                scores["parse_error"] = f"Missing key: {key}"
     except json.JSONDecodeError as exc:
+        scores["judge_empty"] = True
         scores["parse_error"] = f"JSONDecodeError: {exc} | raw={raw[:200]}"
+        return scores
 
-    # overall_score excludes null (nan) dimensions
-    scores["overall_score"] = float(np.nanmean([
+    if not isinstance(parsed, dict):
+        scores["judge_empty"] = True
+        scores["parse_error"] = f"Judge returned non-object: {type(parsed).__name__}"
+        return scores
+
+    missing = []
+    for key in EXPECTED_SCORE_KEYS:
+        if key in parsed:
+            val = parsed[key]
+            scores[key] = float("nan") if val is None else float(val)
+        else:
+            missing.append(key)
+    if missing:
+        scores["parse_error"] = f"Missing keys: {sorted(missing)}"
+
+    scores["overall_applicable"] = float(np.nanmean([
         scores["factuality"],
         scores["reasoning"],
         scores["instruction_following"],
@@ -138,66 +159,69 @@ SAMPLE_PROMPTS = [
         "expected_output_type": "reasoning_chain",
         "ground_truth": "24",
     },
-    {
-        "id": "IF_014",
-        "category": "instruction_following",
-        "prompt_text": (
-            "Create a JSON object representing a person. "
-            "Constraints: (1) Valid, parseable JSON. "
-            "(2) Exactly 5 fields: name, age, occupation, city, hobbies. "
-            "(3) 'hobbies' must be an array of exactly 3 items. "
-            "(4) Double quotes for all strings. "
-            "(5) Output JSON only — no explanation."
-        ),
-        "expected_output_type": "constrained_text",
-        "ground_truth": None,
-    },
 ]
+
+
+def probe_fallbacks() -> int:
+    """Directly call each unique fallback model with a 1-token prompt.
+
+    Bypasses retry+fallback orchestration so we can confirm the fallback models
+    (gemma, nemotron-nano) actually serve responses without first having to
+    burn MAX_RETRY=2 primary failures to get there. Returns the number of
+    fallback models that failed.
+    """
+    targets = sorted(set(FALLBACK_MAP.values()))
+    print(f"\nProbing {len(targets)} fallback models — one API call each "
+          f"(≈{len(targets)} calls total).")
+    failed = 0
+    for model in targets:
+        try:
+            result = call_model(
+                model_id=model,
+                messages=[
+                    {"role": "system", "content": "Reply with one word only."},
+                    {"role": "user",   "content": "Say 'ok'."},
+                ],
+                role="evaluator",
+            )
+            snippet = (result.text or "").strip().replace("\n", " ")[:60]
+            tag = " [FALLBACK-HOP]" if result.fallback_triggered else ""
+            print(f"  OK   {model}{tag}: {result.latency_ms}ms, "
+                  f"{result.tokens_used}t → {snippet!r}")
+        except Exception as exc:
+            failed += 1
+            print(f"  FAIL {model}: {exc}", file=sys.stderr)
+    print(f"\n{len(targets) - failed}/{len(targets)} fallback models reachable.")
+    return failed
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--sample", type=int, default=len(SAMPLE_PROMPTS),
-                        help="Number of sample prompts to run (default: all)")
+                        help="Number of sample prompts to run (default: all).")
+    parser.add_argument("--probe-fallbacks", action="store_true",
+                        help="Probe each FALLBACK_MAP value with one direct API call "
+                             "(skips the eval+judge loop). Use to verify gemma reachability.")
     args = parser.parse_args()
 
+    if args.probe_fallbacks:
+        sys.exit(probe_fallbacks())
+
     prompts_to_run = SAMPLE_PROMPTS[:args.sample]
-
-    print("=" * 70)
-    print(f"Evaluator sample run: {len(prompts_to_run)} prompts × {len(EVALUATOR_MODELS)} models")
-    print("Rate limiting is handled automatically in config/llm.py")
-    print("=" * 70)
-
+    print(f"Evaluator sample run: {len(prompts_to_run)} prompts × "
+          f"{len(EVALUATOR_MODELS)} models — WARNING: hits real API "
+          f"(~{len(prompts_to_run) * len(EVALUATOR_MODELS) * 2} calls).")
     for model in EVALUATOR_MODELS:
         print(f"\n── Model: {model}")
         for prompt_obj in prompts_to_run:
-            pid = prompt_obj["id"]
-            print(f"\n  Prompt {pid}: {prompt_obj['prompt_text'][:60]}...")
-
             try:
                 eval_result = run_model(prompt_obj["prompt_text"], model)
-                response_text = eval_result["text"]
-                print(f"  Response ({eval_result['latency_ms']} ms, {eval_result['tokens_used']} tokens):")
-                print(f"    {response_text[:120].replace(chr(10), ' ')}")
-
-                scores = score_response(prompt_obj, response_text)
-                if scores["parse_error"]:
-                    print(f"  [Judge parse error]: {scores['parse_error']}")
-                else:
-                    fact_str = f"{scores['factuality']:.2f}" if not (scores['factuality'] != scores['factuality']) else "null"
-                    reas_str = f"{scores['reasoning']:.2f}" if not (scores['reasoning'] != scores['reasoning']) else "null"
-                    print(
-                        f"  Scores → factuality={fact_str}  "
-                        f"reasoning={reas_str}  "
-                        f"instr_following={scores['instruction_following']:.2f}  "
-                        f"format={scores['format_compliance']:.2f}  "
-                        f"overall={scores['overall_score']:.2f}  "
-                        f"(judge {scores['judge_latency_ms']} ms)"
-                    )
+                print(f"  {prompt_obj['id']}: {eval_result.latency_ms}ms, "
+                      f"{eval_result.tokens_used} tok, "
+                      f"fallback={eval_result.fallback_triggered}")
+                scores = score_response(prompt_obj, eval_result.text)
+                print(f"    scores={scores}")
             except KeyboardInterrupt:
-                print("\nInterrupted.", file=sys.stderr)
                 sys.exit(0)
             except Exception as exc:
-                print(f"  [ERROR]: {exc}", file=sys.stderr)
-
-    print("\nDone.")
+                print(f"  [ERROR] {prompt_obj['id']}/{model}: {exc}", file=sys.stderr)

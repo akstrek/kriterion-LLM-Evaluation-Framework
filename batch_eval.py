@@ -1,42 +1,63 @@
 """
 batch_eval.py
-Resilient sequential eval runner with daily quota awareness.
+Daily eval runner built on the HTB + DRR architecture.
 
 Architecture:
-  - Sequential: one call at a time (methodological purity, single RPM counter)
-  - Atomic checkpoint: eval_state.json updated after every call
-  - Append-only results: eval_results.parquet written after every scored pair
-  - Daily quota detection: graceful exit + Windows Task Scheduler scheduling
-  - Exponential backoff: retries for transient errors, skip to failed_calls.json
+  - config.scheduler.EvalOrchestrator owns the worker pool and DRR fairness.
+  - config.llm.call_model enforces rate limits, retries, and one fallback hop.
+  - Quota exhaustion → orchestrator sleeps until 00:01 UTC and resumes
+    (no schtasks .bat, no separate process).
+  - Per-row parquet files for atomic O(1) checkpointing; consolidated to
+    eval_results.parquet + eval_results.csv on completion.
 
-Run: python batch_eval.py
+Run: python batch_eval.py [-y]
 """
 import argparse
 import datetime
 import json
-import math
 import os
 import sys
 import threading
-import time
 import urllib.error
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import timezone
 
-import numpy as np
+import math
+
 import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 from tqdm import tqdm
 
 from config.llm import (
-    API_CALL_DELAY,
-    DailyQuotaExhausted,
     EVALUATOR_MODELS,
     JUDGE_MODEL,
     OPENROUTER_API_KEY,
+    htb_status,
 )
+from config.scheduler import EvalOrchestrator
 from evaluator import run_model, score_response
+
+
+def _short_model(model_id: str) -> str:
+    """Trim 'provider/foo-bar:free' → 'provider/foo-bar' for compact display."""
+    return model_id.replace(":free", "")
+
+
+def _one_line(text: str, max_chars: int = 90) -> str:
+    out = (text or "").strip().replace("\n", " ").replace("\r", " ")
+    if len(out) > max_chars:
+        out = out[: max_chars - 1] + "…"
+    return out
+
+
+def _fmt_score(v) -> str:
+    try:
+        if v is None or math.isnan(float(v)):
+            return " nan"
+    except (TypeError, ValueError):
+        return " nan"
+    return f"{float(v):.2f}"
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 DATA_DIR          = "data"
@@ -47,20 +68,9 @@ STATE_PATH        = os.path.join(DATA_DIR, "eval_state.json")
 FAILED_PATH       = os.path.join(DATA_DIR, "failed_calls.json")
 METADATA_PATH     = os.path.join(DATA_DIR, "eval_metadata.json")
 FINAL_CSV_PATH    = os.path.join(DATA_DIR, "eval_results.csv")
-SCHEDULE_BAT      = "schedule_next_run.bat"
 
-# ── Rate / budget constants ────────────────────────────────────────────────────
-# With >=10 OpenRouter credits, :free RPD = 1000. Leave a 50-call safety buffer.
-DAILY_CALL_BUDGET = 950
-CALLS_PER_PAIR    = 2           # 1 eval + 1 judge per (prompt, model) pair
-PAIRS_PER_DAY     = DAILY_CALL_BUDGET // CALLS_PER_PAIR
-PROMPTS_PER_DAY   = DAILY_CALL_BUDGET // (len(EVALUATOR_MODELS) * CALLS_PER_PAIR)
-MAX_RETRY         = 3
-# Per-prompt fan-out: run all evaluator models (and then all judges) concurrently.
-# Global 20-RPM token bucket in config/llm.py keeps the OpenRouter ceiling safe.
-PROMPT_WORKERS    = len(EVALUATOR_MODELS)
 
-# ── Parquet schema ─────────────────────────────────────────────────────────────
+# ── New parquet schema (existing rows are NOT migrated) ──────────────────────
 _SCHEMA = pa.schema([
     pa.field("prompt_id",              pa.string()),
     pa.field("model",                  pa.string()),
@@ -68,14 +78,14 @@ _SCHEMA = pa.schema([
     pa.field("reasoning",              pa.float64()),
     pa.field("instruction_following",  pa.float64()),
     pa.field("format_compliance",      pa.float64()),
-    pa.field("overall_score",          pa.float64()),
-    pa.field("factuality_null",        pa.bool_()),
-    pa.field("reasoning_null",         pa.bool_()),
+    pa.field("overall_applicable",     pa.float64()),
+    pa.field("judge_empty",            pa.bool_()),
+    pa.field("fallback_triggered",     pa.bool_()),
+    pa.field("retry_count",            pa.int32()),
     pa.field("latency_ms",             pa.int64()),
     pa.field("tokens_used",            pa.int64()),
     pa.field("cost_usd",               pa.float64()),
     pa.field("provider",               pa.string()),
-    pa.field("is_fallback",            pa.bool_()),
     pa.field("day_of_run",             pa.int32()),
     pa.field("judge_model",            pa.string()),
     pa.field("parse_error",            pa.string()),
@@ -84,33 +94,17 @@ _SCHEMA = pa.schema([
 ])
 
 
-# ── Utility ────────────────────────────────────────────────────────────────────
-
-def _is_nan(v) -> bool:
-    try:
-        return math.isnan(float(v))
-    except (TypeError, ValueError):
-        return False
-
-
-def _interruptible_sleep(seconds: float) -> None:
-    end = time.time() + seconds
-    while time.time() < end:
-        time.sleep(min(0.5, end - time.time()))
-
-
-# ── State I/O ──────────────────────────────────────────────────────────────────
+# ── State I/O ─────────────────────────────────────────────────────────────────
 
 def load_state() -> dict:
     if not os.path.exists(STATE_PATH):
         return {
-            "total_calls":    0,
-            "total_failures": 0,
-            "resume_events":  0,
-            "day_of_run":     1,
-            "started_at":     datetime.datetime.now(timezone.utc).isoformat(),
-            "last_exhausted": None,
-            "next_run_utc":   None,
+            "total_calls":     0,
+            "total_failures":  0,
+            "resume_events":   0,
+            "day_of_run":      1,
+            "started_at":      datetime.datetime.now(timezone.utc).isoformat(),
+            "htb_snapshot":    htb_status(),
         }
     with open(STATE_PATH, encoding="utf-8") as f:
         return json.load(f)
@@ -153,74 +147,76 @@ def _row_path(prompt_id: str, model: str) -> str:
     return os.path.join(ROWS_DIR, f"{prompt_id}__{_safe_model_filename(model)}.parquet")
 
 
-def _read_legacy_pairs() -> set[tuple[str, str]]:
-    if not os.path.exists(PARQUET_PATH):
-        return set()
-    table = pq.read_table(PARQUET_PATH, columns=["prompt_id", "model"])
-    df = table.to_pandas()
-    return set(zip(df["prompt_id"], df["model"]))
-
-
 def load_completed_pairs() -> set[tuple[str, str]]:
     """Union of legacy single-file parquet and the per-row directory.
-    Reads each row file's prompt_id+model columns directly (filename is opaque)."""
-    pairs = _read_legacy_pairs()
+    Stale rows whose model is no longer in EVALUATOR_MODELS (e.g. a model
+    that was removed from the roster between runs) are ignored — otherwise
+    they would silently mark (prompt_id, stale_model) as 'done' on resume
+    and leak into the consolidated leaderboard."""
+    active = set(EVALUATOR_MODELS)
+    pairs: set[tuple[str, str]] = set()
+    if os.path.exists(PARQUET_PATH):
+        try:
+            t = pq.read_table(PARQUET_PATH, columns=["prompt_id", "model"]).to_pandas()
+            for pid, m in zip(t["prompt_id"], t["model"]):
+                if m in active:
+                    pairs.add((pid, m))
+        except Exception:
+            pass
     if os.path.isdir(ROWS_DIR):
         for fname in os.listdir(ROWS_DIR):
             if not fname.endswith(".parquet"):
                 continue
             try:
-                t = pq.read_table(
-                    os.path.join(ROWS_DIR, fname),
-                    columns=["prompt_id", "model"],
-                )
+                t = pq.read_table(os.path.join(ROWS_DIR, fname),
+                                  columns=["prompt_id", "model"])
                 if t.num_rows:
-                    pairs.add((str(t["prompt_id"][0].as_py()),
-                               str(t["model"][0].as_py())))
+                    m = str(t["model"][0].as_py())
+                    if m in active:
+                        pairs.add((str(t["prompt_id"][0].as_py()), m))
             except Exception:
                 continue
     return pairs
 
 
 def append_row_to_parquet(row: dict) -> None:
-    """O(1) per-row write — one parquet file per (prompt_id, model)."""
+    """Atomic per-row write: tmp → fsync → os.replace."""
     os.makedirs(ROWS_DIR, exist_ok=True)
     record = {
         "prompt_id":             str(row["prompt_id"]),
         "model":                 str(row["model"]),
-        "factuality":            float("nan") if _is_nan(row["factuality"]) else float(row["factuality"]),
-        "reasoning":             float("nan") if _is_nan(row["reasoning"])  else float(row["reasoning"]),
+        "factuality":            float(row["factuality"]),
+        "reasoning":             float(row["reasoning"]),
         "instruction_following": float(row["instruction_following"]),
         "format_compliance":     float(row["format_compliance"]),
-        "overall_score":         float(row["overall_score"]),
-        "factuality_null":       bool(_is_nan(row["factuality"])),
-        "reasoning_null":        bool(_is_nan(row["reasoning"])),
+        "overall_applicable":    float(row["overall_applicable"]),
+        "judge_empty":           bool(row["judge_empty"]),
+        "fallback_triggered":    bool(row["fallback_triggered"]),
+        "retry_count":           int(row["retry_count"]),
         "latency_ms":            int(row["latency_ms"]),
         "tokens_used":           int(row["tokens_used"]),
         "cost_usd":              0.0,
         "provider":              "openrouter",
-        "is_fallback":           False,
         "day_of_run":            int(row["day_of_run"]),
         "judge_model":           str(row["judge_model"]),
         "parse_error":           str(row.get("parse_error") or ""),
         "judge_latency_ms":      int(row["judge_latency_ms"]),
         "judge_tokens_used":     int(row["judge_tokens_used"]),
     }
-    table = pa.Table.from_pydict(
-        {k: [v] for k, v in record.items()},
-        schema=_SCHEMA,
-    )
-    final_path = _row_path(record["prompt_id"], record["model"])
-    tmp = final_path + ".tmp"
+    table = pa.Table.from_pydict({k: [v] for k, v in record.items()}, schema=_SCHEMA)
+    final = _row_path(record["prompt_id"], record["model"])
+    tmp = final + ".tmp"
     pq.write_table(table, tmp)
     with open(tmp, "r+b") as f:
         os.fsync(f.fileno())
-    os.replace(tmp, final_path)
+    os.replace(tmp, final)
 
 
 def consolidate_rows_to_parquet() -> int:
-    """Concatenate all per-row parquet files (plus legacy file) into PARQUET_PATH.
-    Returns the total row count written."""
+    """Concat all per-row parquet files into eval_results.parquet, filtering
+    out any rows whose model is no longer in EVALUATOR_MODELS so a roster
+    change between runs doesn't leak stale lanes into the leaderboard."""
+    active = pa.array(list(EVALUATOR_MODELS), type=pa.string())
     tables = []
     if os.path.exists(PARQUET_PATH):
         tables.append(pq.read_table(PARQUET_PATH))
@@ -231,6 +227,8 @@ def consolidate_rows_to_parquet() -> int:
     if not tables:
         return 0
     combined = pa.concat_tables(tables, promote_options="default")
+    mask = pc.is_in(combined["model"], value_set=active)
+    combined = combined.filter(mask)
     tmp = PARQUET_PATH + ".tmp"
     pq.write_table(combined, tmp)
     with open(tmp, "r+b") as f:
@@ -239,28 +237,27 @@ def consolidate_rows_to_parquet() -> int:
     return combined.num_rows
 
 
-# ── Failed calls log ───────────────────────────────────────────────────────────
-
-def load_failed_calls() -> list[dict]:
-    if not os.path.exists(FAILED_PATH):
-        return []
-    with open(FAILED_PATH, encoding="utf-8") as f:
-        return json.load(f)
-
+# ── Failed calls log ──────────────────────────────────────────────────────────
 
 def append_failed_call(entry: dict) -> None:
     os.makedirs(DATA_DIR, exist_ok=True)
-    failed = load_failed_calls()
-    failed.append(entry)
+    existing: list[dict] = []
+    if os.path.exists(FAILED_PATH):
+        try:
+            with open(FAILED_PATH, encoding="utf-8") as f:
+                existing = json.load(f)
+        except Exception:
+            existing = []
+    existing.append(entry)
     tmp = FAILED_PATH + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(failed, f, indent=2)
+        json.dump(existing, f, indent=2)
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp, FAILED_PATH)
 
 
-# ── Metadata ───────────────────────────────────────────────────────────────────
+# ── Metadata ──────────────────────────────────────────────────────────────────
 
 def save_metadata(state: dict, completed: int, total: int) -> None:
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -274,15 +271,15 @@ def save_metadata(state: dict, completed: int, total: int) -> None:
         "completed_pairs": completed,
         "total_pairs":     total,
         "completed_at":    datetime.datetime.now(timezone.utc).isoformat(),
+        "htb_snapshot":    htb_status(),
     }
     with open(METADATA_PATH, "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)
 
 
-# ── Credit check ───────────────────────────────────────────────────────────────
+# ── Credit telemetry ──────────────────────────────────────────────────────────
 
 def fetch_key_info() -> dict | None:
-    """GET https://openrouter.ai/api/v1/key — returns the `data` payload or None."""
     if not OPENROUTER_API_KEY:
         return None
     req = urllib.request.Request(
@@ -305,47 +302,19 @@ def print_credit_status(label: str, info: dict | None) -> None:
     usage = info.get("usage")
     limit = info.get("limit")
     remaining = (limit - usage) if (limit is not None and usage is not None) else None
-    rate = info.get("rate_limit") or {}
     print(f"  {label}:")
     print(f"    usage:     ${usage:.4f}" if usage is not None else "    usage:     <n/a>")
     print(f"    limit:     ${limit:.4f}" if limit is not None else "    limit:     <unlimited>")
     if remaining is not None:
         print(f"    remaining: ${remaining:.4f}")
-    if rate:
-        print(f"    rate_limit:{rate.get('requests')} / {rate.get('interval')}")
 
 
-# ── Daily quota handling ───────────────────────────────────────────────────────
-
-def log_exhaustion_and_schedule_next_run(state: dict) -> None:
-    reset_utc = (datetime.datetime.now(timezone.utc) + datetime.timedelta(days=1)).replace(
-        hour=0, minute=1, second=0, microsecond=0
-    )
-    state["last_exhausted"] = datetime.datetime.now(timezone.utc).isoformat()
-    state["next_run_utc"]   = reset_utc.isoformat()
-    state["day_of_run"]    += 1
-    save_state(state)
-
-    reset_local = reset_utc.replace(tzinfo=datetime.timezone.utc).astimezone(tz=None)
-    reset_time = reset_local.strftime("%H:%M")
-    bat = (
-        f'schtasks /create /tn "KriterionEval" '
-        f'/tr "python batch_eval.py" /sc once /st {reset_time} /f\n'
-    )
-    with open(SCHEDULE_BAT, "w") as f:
-        f.write(bat)
-
-    print(f"\nDaily quota exhausted ({DAILY_CALL_BUDGET} calls used).")
-    print(f"Run schedule_next_run.bat to auto-resume at {reset_time} UTC.")
-    print(f"Or re-run manually after {reset_utc.strftime('%Y-%m-%d %H:%M')} UTC.")
-
-
-# ── Row builder ────────────────────────────────────────────────────────────────
+# ── Row builder ───────────────────────────────────────────────────────────────
 
 def build_result_row(
     prompt_obj: dict,
     model: str,
-    eval_result: dict,
+    eval_result,
     scores: dict,
     day_of_run: int,
 ) -> dict:
@@ -356,10 +325,13 @@ def build_result_row(
         "reasoning":             scores["reasoning"],
         "instruction_following": scores["instruction_following"],
         "format_compliance":     scores["format_compliance"],
-        "overall_score":         scores["overall_score"],
-        "latency_ms":            eval_result["latency_ms"],
-        "tokens_used":           eval_result["tokens_used"],
-        "judge_model":           JUDGE_MODEL,
+        "overall_applicable":    scores["overall_applicable"],
+        "judge_empty":           scores["judge_empty"],
+        "fallback_triggered":    eval_result.fallback_triggered or scores["fallback_triggered"],
+        "retry_count":           int(eval_result.retry_count) + int(scores["retry_count"]),
+        "latency_ms":            eval_result.latency_ms,
+        "tokens_used":           eval_result.tokens_used,
+        "judge_model":           scores["judge_model"],
         "parse_error":           scores.get("parse_error") or "",
         "judge_latency_ms":      scores["judge_latency_ms"],
         "judge_tokens_used":     scores["judge_tokens_used"],
@@ -367,144 +339,117 @@ def build_result_row(
     }
 
 
-# ── Per-pair processor (thread-safe) ──────────────────────────────────────────
+# ── Per-pair processor ────────────────────────────────────────────────────────
 
 _STATE_LOCK = threading.Lock()
 
 
-def _pending_key(pid: str, model: str) -> str:
-    return f"{pid}|{model}"
-
-
-def _migrate_legacy_pending(state: dict) -> None:
-    """Convert legacy single 'pending_eval' to keyed 'pending_evals' dict."""
-    if "pending_eval" in state and state["pending_eval"]:
-        pe = state.pop("pending_eval")
-        state.setdefault("pending_evals", {})[_pending_key(pe["prompt_id"], pe["model"])] = pe
-    elif "pending_eval" in state:
-        state.pop("pending_eval", None)
-    state.setdefault("pending_evals", {})
-
-
-class _QuotaSignal(Exception):
-    """Internal signal to break out of the executor on DailyQuotaExhausted."""
-
-
-def process_pair(prompt_obj: dict, model: str, state: dict) -> None:
-    """Run one (prompt, model) pair end-to-end. Thread-safe via _STATE_LOCK
-    for state mutations. Raises _QuotaSignal on DailyQuotaExhausted."""
-    pid = prompt_obj["id"]
-    key = _pending_key(pid, model)
-
-    # Recover checkpointed eval if quota hit mid-judge on a prior run
-    with _STATE_LOCK:
-        pending = state.get("pending_evals", {}).get(key)
-    eval_result = pending if pending else None
-
-    # ── Evaluator ─────────────────────────────────────────────────────────────
-    if eval_result is None:
-        total_attempts = MAX_RETRY + 1
-        for attempt in range(total_attempts):
-            with _STATE_LOCK:
-                state["total_calls"] += 1
-                save_state(state)
-            try:
-                eval_result = run_model(prompt_obj["prompt_text"], model)
-                break
-            except DailyQuotaExhausted:
-                raise _QuotaSignal()
-            except KeyboardInterrupt:
-                raise
-            except Exception as exc:
-                wait = 30 * (attempt + 1)
-                is_last = attempt == total_attempts - 1
-                tqdm.write(
-                    f"[EVAL {attempt+1}/{total_attempts}] {pid}/{model}: {exc}"
-                    + ("  — skipping" if is_last else f"  — retry in {wait}s")
-                )
-                if not is_last:
-                    _interruptible_sleep(wait)
-                else:
-                    append_failed_call({
-                        "prompt_id": pid, "model": model, "stage": "eval",
-                        "error": str(exc),
-                        "timestamp": datetime.datetime.now(timezone.utc).isoformat(),
-                    })
-                    with _STATE_LOCK:
-                        state["total_failures"] += 1
-                        save_state(state)
-                    return
-
-    if eval_result is None:
-        return
-
-    # Checkpoint eval result so a quota hit during judge doesn't waste the eval call
-    with _STATE_LOCK:
-        state.setdefault("pending_evals", {})[key] = {
-            "prompt_id": pid, "model": model,
-            "text": eval_result["text"],
-            "latency_ms": eval_result["latency_ms"],
-            "tokens_used": eval_result["tokens_used"],
-        }
-        save_state(state)
-
-    # ── Judge ─────────────────────────────────────────────────────────────────
-    scores = None
-    total_attempts = MAX_RETRY + 1
-    for attempt in range(total_attempts):
-        with _STATE_LOCK:
-            state["total_calls"] += 1
-            save_state(state)
+def make_process_pair(state: dict, pbar: "tqdm | None" = None):
+    def _set_postfix(stage: str, model: str) -> None:
+        if pbar is None:
+            return
         try:
-            scores = score_response(prompt_obj, eval_result["text"])
-            break
-        except DailyQuotaExhausted:
-            raise _QuotaSignal()
-        except KeyboardInterrupt:
-            raise
+            pbar.set_postfix_str(f"{stage}={_short_model(model)}", refresh=False)
+        except Exception:
+            pass
+
+    def _write(msg: str) -> None:
+        if pbar is not None:
+            tqdm.write(msg)
+        else:
+            print(msg, flush=True)
+
+    def process_pair(prompt_obj: dict, model: str) -> None:
+        pid = prompt_obj["id"]
+
+        # Eval
+        _set_postfix("eval", model)
+        try:
+            eval_result = run_model(prompt_obj["prompt_text"], model)
         except Exception as exc:
-            wait = 30 * (attempt + 1)
-            is_last = attempt == total_attempts - 1
-            tqdm.write(
-                f"[JUDGE {attempt+1}/{total_attempts}] {pid}/{model}: {exc}"
-                + ("  — skipping" if is_last else f"  — retry in {wait}s")
+            from config.llm import DailyQuotaExhausted
+            if isinstance(exc, DailyQuotaExhausted):
+                raise
+            append_failed_call({
+                "prompt_id": pid, "model": model, "stage": "eval",
+                "error": str(exc),
+                "timestamp": datetime.datetime.now(timezone.utc).isoformat(),
+            })
+            with _STATE_LOCK:
+                state["total_failures"] += 1
+                save_state(state)
+            _write(f"[{pid}] EVAL FAIL  model={_short_model(model)}  err={exc}")
+            if pbar is not None:
+                pbar.update(1)
+            return
+        with _STATE_LOCK:
+            state["total_calls"] += 1 + int(eval_result.retry_count)
+
+        # Judge / score
+        _set_postfix("judge", JUDGE_MODEL)
+        try:
+            scores = score_response(prompt_obj, eval_result.text)
+        except Exception as exc:
+            from config.llm import DailyQuotaExhausted
+            if isinstance(exc, DailyQuotaExhausted):
+                raise
+            append_failed_call({
+                "prompt_id": pid, "model": model, "stage": "judge",
+                "error": str(exc),
+                "eval_latency_ms": eval_result.latency_ms,
+                "timestamp": datetime.datetime.now(timezone.utc).isoformat(),
+            })
+            with _STATE_LOCK:
+                state["total_failures"] += 1
+                save_state(state)
+            _write(f"[{pid}] JUDGE FAIL model={_short_model(model)}  err={exc}")
+            if pbar is not None:
+                pbar.update(1)
+            return
+        with _STATE_LOCK:
+            state["total_calls"] += 1 + int(scores["retry_count"])
+            day_of_run = state["day_of_run"]
+            state["htb_snapshot"] = htb_status()
+            save_state(state)
+
+        row = build_result_row(prompt_obj, model, eval_result, scores, day_of_run)
+        append_row_to_parquet(row)
+
+        # ── Per-pair display ────────────────────────────────────────────────
+        eval_snip = _one_line(eval_result.text)
+        fb_tag = " [FALLBACK]" if eval_result.fallback_triggered else ""
+        retry_tag = f" retry={eval_result.retry_count}" if eval_result.retry_count else ""
+        if scores.get("judge_empty"):
+            judge_line = (
+                f"judge={_short_model(scores['judge_model'])} → <EMPTY/UNPARSEABLE> "
+                f"err={scores.get('parse_error') or '?'}"
             )
-            if not is_last:
-                _interruptible_sleep(wait)
-            else:
-                append_failed_call({
-                    "prompt_id": pid, "model": model, "stage": "judge",
-                    "error": str(exc),
-                    "eval_latency_ms": eval_result["latency_ms"],
-                    "timestamp": datetime.datetime.now(timezone.utc).isoformat(),
-                })
-                with _STATE_LOCK:
-                    state["total_failures"] += 1
-                    save_state(state)
-                return
+        else:
+            judge_line = (
+                f"judge={_short_model(scores['judge_model'])} → "
+                f"f={_fmt_score(scores['factuality'])} "
+                f"r={_fmt_score(scores['reasoning'])} "
+                f"i={_fmt_score(scores['instruction_following'])} "
+                f"fc={_fmt_score(scores['format_compliance'])} "
+                f"| overall={_fmt_score(scores['overall_applicable'])}"
+            )
+        _write(
+            f"[{pid}] eval={_short_model(model)}{fb_tag}{retry_tag} "
+            f"({eval_result.latency_ms}ms, {eval_result.tokens_used}t) → {eval_snip!r}\n"
+            f"       {judge_line} ({scores['judge_latency_ms']}ms)"
+        )
+        if pbar is not None:
+            pbar.update(1)
 
-    if scores is None:
-        return
-
-    # ── Persist ───────────────────────────────────────────────────────────────
-    with _STATE_LOCK:
-        day_of_run = state["day_of_run"]
-    row = build_result_row(prompt_obj, model, eval_result, scores, day_of_run)
-    append_row_to_parquet(row)
-    with _STATE_LOCK:
-        state.get("pending_evals", {}).pop(key, None)
-        save_state(state)
+    return process_pair
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def _parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Kriterion sequential eval runner")
-    p.add_argument(
-        "-y", "--yes",
-        action="store_true",
-        help="Skip the interactive confirmation (required for Task Scheduler runs).",
-    )
+    p = argparse.ArgumentParser(description="Kriterion eval runner (HTB + DRR)")
+    p.add_argument("-y", "--yes", action="store_true",
+                   help="Skip interactive confirmation (required for non-interactive runs).")
     return p.parse_args()
 
 
@@ -516,7 +461,6 @@ def main() -> None:
     state           = load_state()
     completed_pairs = load_completed_pairs()
 
-    # ── Pre-flight credit check ───────────────────────────────────────────────
     key_info_start = fetch_key_info()
     if key_info_start is not None and "credits_at_start" not in state:
         state["credits_at_start"] = {
@@ -534,26 +478,20 @@ def main() -> None:
         for m in EVALUATOR_MODELS
         if (p["id"], m) not in completed_pairs
     ]
-    days_remaining = math.ceil(len(todo_pairs) / PAIRS_PER_DAY) if todo_pairs else 0
 
-    # ── Banner ────────────────────────────────────────────────────────────────
     print("\n" + "=" * 70)
-    print("Kriterion Batch Evaluation  —  Concurrent Daily Runner")
+    print("Kriterion Batch Evaluation  —  HTB + DRR runner")
     print("=" * 70)
     print(f"  Prompts:            {len(prompts)}")
-    print(f"  Models:             {n_models}  (concurrent, {PROMPT_WORKERS} workers)")
+    print(f"  Models:             {n_models}  ({n_models} worker threads)")
     print(f"  Total pairs:        {total_pairs}")
     print(f"  Completed:          {len(completed_pairs)}")
     print(f"  Remaining pairs:    {len(todo_pairs)}")
-    print(f"  Daily budget:       {DAILY_CALL_BUDGET} calls  →  {PAIRS_PER_DAY} pairs/day  ({PROMPTS_PER_DAY} full prompts/day)")
-    print(f"  Est. days left:     ~{days_remaining}")
     print(f"  Day of run:         {state['day_of_run']}")
     print(f"  Total calls so far: {state['total_calls']}")
     print(f"  Failures logged:    {state['total_failures']}")
     print(f"  Resume events:      {state['resume_events']}")
-    print(f"  Inter-call delay:   {API_CALL_DELAY}s")
-    print(f"  Checkpoint:         {STATE_PATH}")
-    print(f"  Results:            {PARQUET_PATH}")
+    print(f"  Judge model:        {JUDGE_MODEL}")
     print()
     print_credit_status("Credits (pre-flight)", key_info_start)
     print()
@@ -563,9 +501,7 @@ def main() -> None:
         consolidate_rows_to_parquet()
         if os.path.exists(PARQUET_PATH):
             pq.read_table(PARQUET_PATH).to_pandas().to_csv(FINAL_CSV_PATH, index=False)
-            print(f"Final CSV written: {FINAL_CSV_PATH}")
         save_metadata(state, len(completed_pairs), total_pairs)
-        _print_completion_summary(state)
         return
 
     if len(completed_pairs) > 0:
@@ -580,76 +516,47 @@ def main() -> None:
             print("Aborted.")
             return
 
-    _migrate_legacy_pending(state)
-    save_state(state)
-
-    # ── Main loop — concurrent across (prompt, model) pairs ───────────────────
-    # PROMPT_WORKERS threads pull from the queue; the global 20-RPM token bucket
-    # in config/llm.py is the hard ceiling, and per-provider locks naturally
-    # serialize calls to shared providers (e.g. all judge calls share nvidia/).
+    bar_fmt = (
+        "{l_bar}{bar}| {n_fmt}/{total_fmt} pairs "
+        "[{elapsed}<{remaining}, {rate_fmt}]{postfix}"
+    )
     try:
-        with tqdm(total=len(todo_pairs), unit="pair", desc="Evaluating") as pbar, \
-             ThreadPoolExecutor(max_workers=PROMPT_WORKERS) as pool:
-            futures = {
-                pool.submit(process_pair, p, m, state): (p["id"], m)
-                for p, m in todo_pairs
-            }
-            try:
-                for fut in as_completed(futures):
-                    try:
-                        fut.result()
-                    except _QuotaSignal:
-                        # Cancel everything still queued and schedule next run
-                        for f in futures:
-                            f.cancel()
-                        log_exhaustion_and_schedule_next_run(state)
-                        sys.exit(0)
-                    pbar.update(1)
-            except KeyboardInterrupt:
-                for f in futures:
-                    f.cancel()
-                raise
-
-        # ── Completion ────────────────────────────────────────────────────────
-        final_set = load_completed_pairs()
-        final_completed = len(completed_pairs) + sum(
-            1 for p, m in todo_pairs
-            if (p["id"], m) in final_set
-        )
-        consolidate_rows_to_parquet()
-        if os.path.exists(PARQUET_PATH):
-            pq.read_table(PARQUET_PATH).to_pandas().to_csv(FINAL_CSV_PATH, index=False)
-
-        save_metadata(state, final_completed, total_pairs)
-        _print_completion_summary(state)
-
+        with tqdm(total=len(todo_pairs), desc="Evaluating", unit="pair",
+                  bar_format=bar_fmt, dynamic_ncols=True) as pbar:
+            orch = EvalOrchestrator(EVALUATOR_MODELS, make_process_pair(state, pbar))
+            orch.enqueue_all(todo_pairs)
+            stats = orch.run()
     except KeyboardInterrupt:
         print("\nInterrupted — state saved.", flush=True)
         sys.exit(0)
 
+    final_set = load_completed_pairs()
+    final_completed = len(completed_pairs) + sum(
+        1 for p, m in todo_pairs if (p["id"], m) in final_set
+    )
+    consolidate_rows_to_parquet()
+    if os.path.exists(PARQUET_PATH):
+        pq.read_table(PARQUET_PATH).to_pandas().to_csv(FINAL_CSV_PATH, index=False)
 
-def _print_completion_summary(state: dict) -> None:
+    save_metadata(state, final_completed, total_pairs)
+
     print("\n── Run summary ──────────────────────────────────────────────────────")
+    print(f"  Completed:      {stats.completed}")
+    print(f"  Failed:         {stats.failed}")
+    print(f"  Quota sleeps:   {stats.quota_sleeps}")
     print(f"  Total calls:    {state['total_calls']}")
-    print(f"  Failures:       {state['total_failures']}")
-    print(f"  Days of run:    {state['day_of_run']}")
-    print(f"  Provider:       openrouter")
-    print(f"  Resume events:  {state['resume_events']}")
+    print(f"  Total failures: {state['total_failures']}")
     if os.path.exists(FINAL_CSV_PATH):
         print(f"  CSV output:     {FINAL_CSV_PATH}")
-    if os.path.exists(METADATA_PATH):
-        print(f"  Metadata:       {METADATA_PATH}")
 
     key_info_end = fetch_key_info()
     print()
     print_credit_status("Credits (post-run)", key_info_end)
-
     start = state.get("credits_at_start") or {}
-    start_usage = start.get("usage")
-    end_usage = (key_info_end or {}).get("usage")
-    if start_usage is not None and end_usage is not None:
-        spent = end_usage - start_usage
-        marker = "  WARNING — non-zero credit spend detected!" if spent > 0.01 else ""
+    s, e = start.get("usage"), (key_info_end or {}).get("usage")
+    if s is not None and e is not None:
+        spent = e - s
+        marker = "  WARNING — non-zero credit spend!" if spent > 0.01 else ""
         print(f"    spent this run: ${spent:.4f}{marker}")
 
 

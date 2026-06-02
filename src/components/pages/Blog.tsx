@@ -1,3 +1,4 @@
+import * as React from "react";
 import { motion } from "motion/react";
 import { BottomLeft } from "../layout/BottomLeft";
 import { BottomRight } from "../layout/BottomRight";
@@ -32,6 +33,347 @@ function Pill({ children }: { children: React.ReactNode }) {
   );
 }
 
+// Provider glyphs: simple-icons SVG paths for openai/google/nvidia, monogram
+// for moonshotai (no simple-icons entry). All paths use viewBox 0 0 24 24 and
+// fill currentColor so they inherit the chip's text colour.
+type ProviderKind = "M" | "G" | "O" | "N";
+
+function ProviderGlyph({ kind }: { kind: ProviderKind }) {
+  if (kind === "O") {
+    return (
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true" className="text-[#C8C2B8]">
+        <path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z" />
+      </svg>
+    );
+  }
+  if (kind === "G") {
+    return (
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true" className="text-[#C8C2B8]">
+        <path d="M12.545 10.239v3.821h5.445c-.712 2.315-2.647 3.972-5.445 3.972a6.033 6.033 0 110-12.064c1.498 0 2.866.549 3.921 1.453l2.814-2.814A9.969 9.969 0 0012.545 2C7.021 2 2.543 6.477 2.543 12s4.478 10 10.002 10c8.396 0 10.249-7.85 9.426-11.748l-9.426-.013z" />
+      </svg>
+    );
+  }
+  if (kind === "N") {
+    return (
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true" className="text-[#C8C2B8]">
+        <path d="M8.948 8.798v-1.43a6.7 6.7 0 0 1 .424-.018c3.922-.123 6.493 3.374 6.493 3.374s-2.774 3.851-5.75 3.851c-.398 0-.787-.062-1.158-.185v-4.346c1.528.185 1.837.857 2.747 2.385l2.04-1.714s-1.493-1.961-4.002-1.961c-.27-.003-.534.015-.794.044zm0-4.726v2.138c.142-.013.284-.024.424-.029 5.45-.185 9.013 4.473 9.013 4.473s-4.083 4.973-8.331 4.973c-.379 0-.74-.034-1.107-.092v1.327c.308.038.61.061.918.061 3.957 0 6.811-2.022 9.572-4.413.458.367 2.337 1.262 2.726 1.654-2.625 2.199-8.741 3.969-12.232 3.969-.336 0-.659-.02-.978-.052v1.875h15.027V4.072H8.948zm0 10.314v1.126c-3.654-.654-4.668-4.453-4.668-4.453s1.756-1.943 4.668-2.255v1.235l-.006-.001c-1.527-.185-2.728 1.247-2.728 1.247s.677 2.418 2.734 3.101zm-6.42-3.471s2.165-3.201 6.42-3.524v-1.149c-4.71.379-8.794 4.366-8.794 4.366s2.312 6.687 8.794 7.299v-1.219c-4.758-.598-6.42-5.773-6.42-5.773z" />
+      </svg>
+    );
+  }
+  return <span className="text-[#C8C2B8] text-[11px] font-mono font-bold">{kind}</span>;
+}
+
+// ── Model card data + render ────────────────────────────────────────────────
+// Four compound cards: Judge + 3 Evaluators. Each primary card has its
+// fallback collapsed inside it, expandable on click. google/gemma-4-31b-it
+// carries dual badges (Evaluator + Evaluator Fallback) because it serves
+// as BOTH a primary evaluator AND as the fallback for openai/gpt-oss-120b.
+// The gpt-oss-120b card's fallback section is a cross-reference back to the
+// gemma card rendered above (no duplicate render).
+
+type CardRole = "judge" | "judgeFallback" | "evaluator" | "evaluatorFallback";
+type ArchType = "MoE" | "Dense" | "Hybrid" | "LatentMoE";
+
+interface ModelData {
+  displayName: string;
+  primaryId: string;
+  provider: string;
+  providerKind: ProviderKind;
+  parameters: string;
+  oneLiner: string;
+  architecturalHighlight: string;
+  architectureType: ArchType;
+  huggingFaceUrl: string;
+}
+
+interface PrimaryCardData extends ModelData {
+  role: "judge" | "evaluator";
+  secondaryRole?: "evaluatorFallback";
+  alsoFallbackFor?: string;
+  fallbackRole?: CardRole;
+  inlineFallback?: ModelData;
+  crossRefFallback?: { displayName: string; primaryId: string };
+}
+
+// ROLE BADGE — base styles plus group-hover amplification so the badge
+// gains contrast at the exact moment the user is about to commit to a click.
+const ROLE_BADGE_STYLES: Record<CardRole, string> = {
+  judge:
+    "bg-[#C8873A]/20 border border-[#C8873A]/40 text-[#F5C387] " +
+    "group-hover:bg-[#C8873A]/30 group-hover:border-[#C8873A]/75 group-hover:text-[#FCD3A0]",
+  judgeFallback:
+    "bg-[#C8873A]/10 border border-[#C8873A]/25 text-[#F5C387]/70 " +
+    "group-hover:bg-[#C8873A]/20 group-hover:border-[#C8873A]/50 group-hover:text-[#F5C387]/95",
+  evaluator:
+    "bg-white/[0.08] border border-white/[0.18] text-[#F5F0E8] " +
+    "group-hover:bg-white/[0.14] group-hover:border-white/[0.30]",
+  evaluatorFallback:
+    "bg-white/[0.04] border border-white/[0.10] text-[#C8C2B8] " +
+    "group-hover:bg-white/[0.08] group-hover:border-white/[0.20] group-hover:text-[#F5F0E8]",
+};
+
+const ROLE_BADGE_LABELS: Record<CardRole, string> = {
+  judge:             "Judge",
+  judgeFallback:     "Judge Fallback",
+  evaluator:         "Evaluator",
+  evaluatorFallback: "Evaluator Fallback",
+};
+
+function RoleBadge({ role }: { role: CardRole }) {
+  return (
+    <span className={`inline-block px-2 py-0.5 rounded-md text-[9px] uppercase tracking-[0.15em] font-mono font-medium transition-colors duration-200 ${ROLE_BADGE_STYLES[role]}`}>
+      {ROLE_BADGE_LABELS[role]}
+    </span>
+  );
+}
+
+function ArchPill({ type }: { type: ArchType }) {
+  return (
+    <span className="inline-block px-1.5 py-0.5 rounded bg-white/[0.06] border border-white/[0.10] text-[#F5F0E8]/80 text-[10px] tracking-wide font-mono mx-1 align-baseline">
+      {type}
+    </span>
+  );
+}
+
+function ChevronDown({ className = "" }: { className?: string }) {
+  return (
+    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" xmlns="http://www.w3.org/2000/svg" className={className}>
+      <path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  );
+}
+
+// InlinedFallback — full fallback content rendered inside the parent primary card
+// when the user expands the toggle. Visually subordinate via reduced padding,
+// muted background, and dimmed opacity.
+const InlinedFallback: React.FC<{ data: ModelData; role: CardRole; parentName: string }> = ({ data, role, parentName }) => {
+  return (
+    <div className="group/fallback relative mt-3 -mx-5 -mb-5 px-5 pt-4 pb-5 bg-black/30 border-t border-white/[0.06] rounded-b-2xl">
+      {/* fallback HF link — same hover-arrow-chip pattern as the primary card */}
+      <a
+        href={data.huggingFaceUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label={`Open ${data.displayName} on HuggingFace`}
+        onClick={(e) => e.stopPropagation()}
+        className="absolute top-3 right-3 w-6 h-6 rounded-full bg-white flex items-center justify-center opacity-40 group-hover/fallback:opacity-100 hover:scale-110 transition-all duration-200"
+      >
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M2.5 7.5L7.5 2.5M7.5 2.5H3.5M7.5 2.5V6.5" stroke="#0A0806" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      </a>
+
+      <div className="flex flex-wrap items-center gap-2 mb-3 pr-10">
+        <RoleBadge role={role} />
+        <span className="text-[10px] text-[#C8C2B8]/70 font-mono">↳ fallback for {parentName}</span>
+      </div>
+
+      <div className="flex items-start gap-3 mb-3">
+        <div className="flex-shrink-0 w-7 h-7 rounded-lg bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mt-0.5">
+          <ProviderGlyph kind={data.providerKind} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-[#F5F0E8] text-[12px] font-semibold leading-tight">{data.displayName}</p>
+          <p className="text-[#C8C2B8] text-[10px] font-mono mt-0.5 truncate">{data.primaryId}</p>
+        </div>
+      </div>
+
+      <p className="text-[#C8C2B8] text-[11px] font-mono mb-2">
+        Provider: {data.provider}  |  Parameters: {data.parameters}
+      </p>
+      <p className="text-[#C8C2B8] text-[12px] leading-relaxed mb-2">{data.oneLiner}</p>
+      <p className="text-[#C8C2B8] text-[12px] leading-relaxed">
+        <span className="text-[#F5F0E8] text-[10px] uppercase tracking-[0.15em] font-medium">Architectural Highlight</span>
+        <ArchPill type={data.architectureType} />
+        {data.architecturalHighlight}
+      </p>
+    </div>
+  );
+};
+
+const ModelCard: React.FC<{ data: PrimaryCardData }> = ({ data }) => {
+  const [expanded, setExpanded] = React.useState(false);
+  const hasInline = !!data.inlineFallback;
+  const hasCrossRef = !!data.crossRefFallback;
+  const fallbackId = data.inlineFallback?.primaryId ?? data.crossRefFallback?.primaryId;
+  return (
+    <div className="group relative bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5 transition-transform duration-200 hover:scale-[1.02]">
+      {/* primary HF link — top-right hover-arrow */}
+      <a
+        href={data.huggingFaceUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label={`Open ${data.displayName} on HuggingFace`}
+        onClick={(e) => e.stopPropagation()}
+        className="absolute top-3 right-3 w-6 h-6 rounded-full bg-white flex items-center justify-center opacity-40 group-hover:opacity-100 hover:scale-110 transition-all duration-200"
+      >
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M2.5 7.5L7.5 2.5M7.5 2.5H3.5M7.5 2.5V6.5" stroke="#0A0806" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      </a>
+
+      {/* role badges */}
+      <div className="flex flex-wrap items-center gap-2 mb-3 pr-10">
+        <RoleBadge role={data.role} />
+        {data.secondaryRole && <RoleBadge role={data.secondaryRole} />}
+      </div>
+
+      {data.alsoFallbackFor && (
+        <p className="text-[10px] text-[#C8C2B8]/70 font-mono mb-3">
+          ↳ also fallback for {data.alsoFallbackFor}
+        </p>
+      )}
+
+      {/* provider chip + name + id */}
+      <div className="flex items-start gap-3 mb-3">
+        <div className="flex-shrink-0 w-7 h-7 rounded-lg bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mt-0.5">
+          <ProviderGlyph kind={data.providerKind} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-[#F5F0E8] text-[13px] font-semibold leading-tight">{data.displayName}</p>
+          <p className="text-[#C8C2B8] text-[10px] font-mono mt-0.5 truncate">{data.primaryId}</p>
+        </div>
+      </div>
+
+      <p className="text-[#C8C2B8] text-[11px] font-mono mb-3">
+        Provider: {data.provider}  |  Parameters: {data.parameters}
+      </p>
+      <p className="text-[#C8C2B8] text-[12px] leading-relaxed mb-3">{data.oneLiner}</p>
+      <p className="text-[#C8C2B8] text-[12px] leading-relaxed">
+        <span className="text-[#F5F0E8] text-[10px] uppercase tracking-[0.15em] font-medium">Architectural Highlight</span>
+        <ArchPill type={data.architectureType} />
+        {data.architecturalHighlight}
+      </p>
+
+      {/* expandable fallback toggle (inline data) */}
+      {hasInline && data.fallbackRole && (
+        <>
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            aria-expanded={expanded}
+            className="w-full flex items-center gap-2 pt-3 mt-3 px-5 pb-3 border-t border-white/[0.04] cursor-pointer hover:bg-white/[0.025] transition-colors -mx-5 -mb-5 rounded-b-2xl"
+          >
+            <span className="text-[9px] uppercase tracking-widest text-[#C8C2B8]/60 font-mono">fallback →</span>
+            <span className="text-[#C8C2B8] text-[10px] font-mono truncate flex-1 text-left">{fallbackId}</span>
+            <span className="text-[9px] uppercase tracking-widest text-[#C8C2B8]/40 font-mono">{expanded ? "hide" : "show"}</span>
+            <ChevronDown className={`text-[#C8C2B8]/60 transition-transform duration-200 ${expanded ? "rotate-180" : ""}`} />
+          </button>
+          {expanded && (
+            <InlinedFallback data={data.inlineFallback!} role={data.fallbackRole} parentName={data.displayName} />
+          )}
+        </>
+      )}
+
+      {/* cross-reference fallback (no expand — points to a card rendered above) */}
+      {hasCrossRef && (
+        <div className="flex items-center gap-2 pt-3 mt-3 border-t border-white/[0.04]">
+          <span className="text-[9px] uppercase tracking-widest text-[#C8C2B8]/60 font-mono">fallback →</span>
+          <span className="text-[#C8C2B8] text-[10px] font-mono truncate flex-1">{data.crossRefFallback!.primaryId}</span>
+          <span className="text-[10px] text-[#C8C2B8]/60 italic">(see {data.crossRefFallback!.displayName} above)</span>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const MODEL_CARDS: PrimaryCardData[] = [
+  // ── JUDGE ──────────────────────────────────────────────────────────────────
+  {
+    displayName: "NVIDIA Nemotron 3 Super 120B",
+    primaryId: "nvidia/nemotron-3-super-120b-a12b:free",
+    role: "judge",
+    provider: "NVIDIA",
+    providerKind: "N",
+    parameters: "120B total, 12B active",
+    oneLiner: "NVIDIA's flagship open-weight reasoning model with a 1M-token context window.",
+    architecturalHighlight: "Mamba-2 + MoE + Attention with Multi-Token Prediction (MTP). LatentMoE projects tokens into a smaller latent dimension, calling 4 experts for the cost of 1.",
+    architectureType: "LatentMoE",
+    huggingFaceUrl: "https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8",
+    fallbackRole: "judgeFallback",
+    inlineFallback: {
+      displayName: "NVIDIA Nemotron 3 Nano 30B",
+      primaryId: "nvidia/nemotron-3-nano-30b-a3b:free",
+      provider: "NVIDIA",
+      providerKind: "N",
+      parameters: "31.6B total, 3.2B active",
+      oneLiner: "NVIDIA's compact hybrid MoE backup judge with a 1M-token context window.",
+      architecturalHighlight: "Hybrid Mamba-2 + Transformer MoE with 128 granular experts, top-6 routing. 23 Mamba-2 + 23 MoE + 6 Attention layers.",
+      architectureType: "Hybrid",
+      huggingFaceUrl: "https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
+    },
+  },
+  // ── EVALUATOR 1 — Kimi ─────────────────────────────────────────────────────
+  {
+    displayName: "Moonshot AI Kimi K2.6",
+    primaryId: "moonshotai/kimi-k2.6:free",
+    role: "evaluator",
+    provider: "Moonshot AI",
+    providerKind: "M",
+    parameters: "1T total, 32B active",
+    oneLiner: "Moonshot AI's open-source native multimodal agentic model with a 256K context window.",
+    architecturalHighlight: "384 experts, 8 selected per token plus 1 shared expert. Multi-Latent Attention with SwiGLU.",
+    architectureType: "MoE",
+    huggingFaceUrl: "https://huggingface.co/moonshotai/Kimi-K2.6",
+    fallbackRole: "evaluatorFallback",
+    inlineFallback: {
+      displayName: "Google Gemma 4 26B-A4B-IT",
+      primaryId: "google/gemma-4-26b-a4b-it:free",
+      provider: "Google",
+      providerKind: "G",
+      parameters: "26B total, 4B active",
+      oneLiner: "Google's efficient MoE Gemma variant under Apache 2.0 with a 256K context window.",
+      architecturalHighlight: "128 fine-grained experts, top-8 routing, custom GELU FFN. Dual sliding-window plus global attention.",
+      architectureType: "MoE",
+      huggingFaceUrl: "https://huggingface.co/google/gemma-4-26B-A4B-it",
+    },
+  },
+  // ── EVALUATOR 2 — Gemma 4 31B (dual-role: also fallback for GPT-OSS 120B) ──
+  {
+    displayName: "Google Gemma 4 31B-IT",
+    primaryId: "google/gemma-4-31b-it:free",
+    role: "evaluator",
+    secondaryRole: "evaluatorFallback",
+    alsoFallbackFor: "GPT-OSS 120B",
+    provider: "Google",
+    providerKind: "G",
+    parameters: "31B dense (all parameters active)",
+    oneLiner: "Google's flagship dense Gemma 4 model — built on the Gemini 3 architecture with a ~550M vision encoder.",
+    architecturalHighlight: "Sliding-window (1024 tokens) plus global full attention. Proportional RoPE for 256K context coherence.",
+    architectureType: "Dense",
+    huggingFaceUrl: "https://huggingface.co/google/gemma-4-31B-it",
+    fallbackRole: "evaluatorFallback",
+    inlineFallback: {
+      displayName: "OpenAI GPT-OSS 20B",
+      primaryId: "openai/gpt-oss-20b:free",
+      provider: "OpenAI",
+      providerKind: "O",
+      parameters: "21B total, 3.6B active",
+      oneLiner: "OpenAI's compact open-weight MoE that fits in 16GB VRAM under Apache 2.0, 128K context.",
+      architecturalHighlight: "32 experts per layer, top-4 routing, MXFP4 quantization.",
+      architectureType: "MoE",
+      huggingFaceUrl: "https://huggingface.co/openai/gpt-oss-20b",
+    },
+  },
+  // ── EVALUATOR 3 — GPT-OSS 120B (fallback is gemma-4-31b → cross-ref above) ─
+  {
+    displayName: "OpenAI GPT-OSS 120B",
+    primaryId: "openai/gpt-oss-120b:free",
+    role: "evaluator",
+    provider: "OpenAI",
+    providerKind: "O",
+    parameters: "117B total, 5.1B active",
+    oneLiner: "OpenAI's flagship open-weight MoE, MXFP4-quantized to run on a single H100, 128K context.",
+    architecturalHighlight: "128 experts per layer, top-4 routing, alternating dense plus sparse attention with learned attention sinks.",
+    architectureType: "MoE",
+    huggingFaceUrl: "https://huggingface.co/openai/gpt-oss-120b",
+    crossRefFallback: {
+      displayName: "Gemma 4 31B-IT",
+      primaryId: "google/gemma-4-31b-it:free",
+    },
+  },
+];
+
 export function Blog() {
   return (
     <motion.div
@@ -55,6 +397,38 @@ export function Blog() {
             <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5">
               <p className="text-[#C8C2B8] text-[14px] leading-relaxed max-w-[580px]">
                 A transparent walkthrough of the evaluation dimensions, prompt taxonomy, judge architecture, and reproducibility choices that make Kriterion's rankings defensible.
+              </p>
+            </div>
+          </motion.div>
+
+          {/* The Architecture, 30-second pitch */}
+          <motion.div custom={0.5} variants={fadeUp} initial="hidden" animate="show" className="mb-10">
+            <SectionLabel>The Architecture</SectionLabel>
+            <h3 className="font-display text-[#F5F0E8] text-[22px] font-bold tracking-tight mb-5">
+              Traffic Shaping the Free Tier
+            </h3>
+            <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5 space-y-4">
+              <p className="text-[#C8C2B8] text-[13px] leading-relaxed">
+                The OpenRouter free tier is a hard-capped multi-tenant resource: 20 RPM, 1000 RPD, no paid fallback. The disciplined port treats it as network traffic shaping, not a counter.
+              </p>
+              <div className="space-y-2">
+                {[
+                  { pill: "HTB",     cite: "Devera, 2002",                text: "Hierarchical Token Bucket — root quota refills continuously; providers borrow when siblings idle." },
+                  { pill: "DRR",     cite: "Shreedhar & Varghese, 1996",  text: "Deficit Round Robin schedules per-model fairness; throttled lanes never starve siblings." },
+                  { pill: "Split",   cite: "650 + 300 RPD",               text: "Judge and evaluator hold separate guaranteed shares of the daily quota." },
+                  { pill: "Backoff", cite: "TCP-style",                   text: "429-burst halves root rate for a 5-minute cooldown, then restores automatically." },
+                ].map((b) => (
+                  <div key={b.pill} className="flex items-start gap-3 bg-white/[0.03] rounded-lg p-3 border border-white/[0.05]">
+                    <div className="flex-shrink-0 flex flex-col items-start gap-1 min-w-[88px]">
+                      <Pill>{b.pill}</Pill>
+                      <span className="text-[9px] uppercase tracking-widest text-[#C8C2B8]/60 font-mono leading-tight">{b.cite}</span>
+                    </div>
+                    <p className="text-[#C8C2B8] text-[12px] leading-relaxed flex-1 pt-0.5">{b.text}</p>
+                  </div>
+                ))}
+              </div>
+              <p className="text-[#F5F0E8] text-[13px] leading-relaxed">
+                <span className="font-mono text-[#C8C2B8]">tc-htb</span> applied to API quota. The runner finishes flush with quota instead of crashing into it.
               </p>
             </div>
           </motion.div>
@@ -185,7 +559,7 @@ export function Blog() {
             </h3>
             <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5 mb-5">
               <p className="text-[#C8C2B8] text-[13px] leading-relaxed">
-                <span className="text-[#F5F0E8]">NVIDIA Nemotron 3 Super 120B</span> serves as the sole judge. 200 prompts × 3 evaluators = 600 evaluator calls producing 600 responses. Each response receives 1 judge call — 600 judge calls total, each producing a score dict across 4 dimensions. Total: 1,200 API calls. Total dimensions scored: 2,400.
+                <span className="text-[#F5F0E8]">NVIDIA Nemotron 3 Super 120B</span> serves as the sole judge. 200 prompts × 3 evaluators = 600 evaluator calls producing 600 responses. Each response receives 1 judge call — 600 judge calls total, each producing a score dict across 4 dimensions. Total: 1,200 API calls on the happy path; up to 2 retries plus 1 fallback hop on a degraded provider, all counted against the daily quota. Total dimensions scored: 2,400.
               </p>
             </div>
 
@@ -194,77 +568,10 @@ export function Blog() {
             </p>
 
             <div className="space-y-3 mb-6">
-              {[
-                {
-                  name: "OpenAI GPT-OSS 120B",
-                  meta: "Provider: OpenAI  |  Parameters: 120B",
-                  release: "GPT-OSS 120B is OpenAI's latest open-weight model with knowledge cutoff through April 2024.",
-                  highlight: "Trained on diverse instruction-following data, excelling at reasoning tasks and code generation with strong generalization across domains.",
-                  link: "https://huggingface.co/openai/gpt-oss-120b",
-                },
-                {
-                  name: "OpenAI GPT-OSS 20B",
-                  meta: "Provider: OpenAI  |  Parameters: 20B",
-                  release: "GPT-OSS 20B is OpenAI's lightweight open-weight variant with knowledge cutoff through April 2024.",
-                  highlight: "Optimized for efficiency and speed while maintaining strong instruction-following and reasoning capabilities across diverse tasks.",
-                  link: "https://huggingface.co/openai/gpt-oss-20b",
-                },
-                {
-                  name: "MiniMax M2.5",
-                  meta: "Provider: MiniMax  |  Parameters: 256B (MoE)",
-                  release: "MiniMax M2.5 is MiniMax's latest mixture-of-experts model with knowledge cutoff through September 2024.",
-                  highlight: "MoE architecture enables efficient routing to specialized expert subnetworks, achieving superior reasoning and multilingual performance with minimal latency.",
-                  link: "https://huggingface.co/MiniMaxAI/MiniMax-M2.5",
-                },
-              ].map((model) => (
-                <a
-                  key={model.name}
-                  href={model.link}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="group relative block bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5 transition-transform duration-200 hover:scale-[1.02]"
-                >
-                  <div className="absolute top-3 right-3 w-6 h-6 rounded-full bg-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M2.5 7.5L7.5 2.5M7.5 2.5H3.5M7.5 2.5V6.5" stroke="#0A0806" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                    </svg>
-                  </div>
-                  <p className="text-[#F5F0E8] text-[13px] font-semibold mb-1">{model.name}</p>
-                  <p className="text-[#C8C2B8] text-[11px] font-mono mb-3">{model.meta}</p>
-                  <p className="text-[#C8C2B8] text-[12px] leading-relaxed mb-2">{model.release}</p>
-                  <p className="text-[#C8C2B8] text-[12px] leading-relaxed">
-                    <span className="text-[#F5F0E8] text-[11px] uppercase tracking-wider font-medium">Architectural Highlight  </span>
-                    {model.highlight}
-                  </p>
-                </a>
+              {MODEL_CARDS.map((data) => (
+                <ModelCard key={`${data.primaryId}-${data.role}`} data={data} />
               ))}
             </div>
-
-            <a
-              href="https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="group relative block bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5 mb-6 transition-transform duration-200 hover:scale-[1.02]"
-            >
-              <div className="absolute top-3 right-3 w-6 h-6 rounded-full bg-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M2.5 7.5L7.5 2.5M7.5 2.5H3.5M7.5 2.5V6.5" stroke="#0A0806" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
-              </div>
-              <p className="text-[10px] uppercase tracking-[0.2em] text-[#C8C2B8] mb-3 font-medium">Judge Model</p>
-              <p className="text-[#F5F0E8] text-[13px] font-semibold mb-1">NVIDIA Nemotron 3 Super 120B</p>
-              <p className="text-[#C8C2B8] text-[11px] font-mono mb-3">Provider: NVIDIA  |  Parameters: 120B</p>
-              <p className="text-[#C8C2B8] text-[12px] leading-relaxed mb-2">Nemotron 3 Super is NVIDIA's latest open-weight model with knowledge cutoff through March 2024.</p>
-              <p className="text-[#C8C2B8] text-[12px] leading-relaxed mb-4">
-                <span className="text-[#F5F0E8] text-[11px] uppercase tracking-wider font-medium">Architectural Highlight  </span>
-                Trained on curated instruction-following data using NVIDIA's synthetic data generation pipeline, delivering exceptional performance on reasoning, factuality, and instruction adherence across domains.
-              </p>
-              <div className="border-l-2 border-white/[0.15] pl-4">
-                <p className="text-[#C8C2B8] text-[12px] leading-relaxed italic">
-                  Nemotron 3 Super is used in production by OpenClaw, Kilo Code, Hermes Agent, and Claude Code, making it one of the most battle-tested free-tier judge models available.
-                </p>
-              </div>
-            </a>
 
             <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5 mb-6">
               <p className="text-[#C8C2B8] text-[13px] leading-relaxed">
@@ -334,11 +641,50 @@ null example: {"factuality":null,"reasoning":null,"instruction_following":0.85,"
           <motion.div custom={8} variants={fadeUp} initial="hidden" animate="show">
             <SectionLabel>04, Eval Infrastructure</SectionLabel>
             <h3 className="font-display text-[#F5F0E8] text-[20px] font-bold tracking-tight mb-5">
-              Atomic Writes, Scheduled Resumption
+              HTB, DRR, and Atomic Writes
             </h3>
-            <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5">
+
+            <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5 mb-3">
+              <p className="text-[10px] uppercase tracking-[0.2em] text-[#C8C2B8] mb-3 font-medium">Hierarchical Token Bucket</p>
+              <p className="text-[#C8C2B8] text-[13px] leading-relaxed mb-4">
+                The Linux <span className="font-mono text-[#F5F0E8]">tc qdisc htb</span> primitive (Devera, 2002), applied to the OpenRouter quota. A root node holds the 18 RPM / 950 RPD ceiling. Provider leaves carry guaranteed shares — eval gets 650 RPD split across moonshotai, google, and openai; judge gets 300 RPD on nvidia. An idle sibling's tokens are borrowed up to the root cap (full HTB borrow semantics), so no leaf starves while another sits idle.
+              </p>
+              <pre className="bg-white/[0.03] rounded-lg p-3 border border-white/[0.05] text-[11px] text-[#C8C2B8] font-mono leading-relaxed overflow-x-auto">
+{`root         18 RPM,  950 RPD       ← OpenRouter ceiling
+ ├── nvidia       300 RPD            ← judge
+ ├── openai       163 RPD            ← gpt-oss-120b
+ ├── moonshotai   163 RPD            ← kimi-k2.6
+ └── google       325 RPD            ← gemma + fallback landing pad
+
+borrow: any leaf may consume idle siblings' tokens up to root`}
+              </pre>
+            </div>
+
+            <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5 mb-3">
+              <p className="text-[10px] uppercase tracking-[0.2em] text-[#C8C2B8] mb-3 font-medium">Deficit Round Robin</p>
               <p className="text-[#C8C2B8] text-[13px] leading-relaxed">
-                Kriterion runs on a resilient pipeline built for multi-day execution. Every call result is written atomically to parquet before the next call begins, so a crash, power loss, or daily quota exhaustion cannot cause data loss. On quota exhaustion, the runner schedules its own resumption via Windows Task Scheduler at UTC midnight reset and exits cleanly. The full 1,200-call evaluation completes over multiple days on a single provider's free tier, which is methodologically cleaner than cross-provider arbitrage, eliminating inference variance as a confounding variable. Total cost: $0.
+                One FIFO queue per evaluator model; a DRR scheduler (Shreedhar &amp; Varghese, 1996) services them with a per-queue deficit counter and unit quantum. A producer thread fills a bounded pair-queue; three workers (one per evaluator) consume. The scheduler gates on the HTB so a throttled lane is skipped without consuming its quantum. Replaces the prior <span className="font-mono">ThreadPoolExecutor.as_completed</span> path that head-of-line-blocked on the slowest provider.
+              </p>
+            </div>
+
+            <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5 mb-3">
+              <p className="text-[10px] uppercase tracking-[0.2em] text-[#C8C2B8] mb-3 font-medium">Retry and Adaptive Throttle</p>
+              <p className="text-[#C8C2B8] text-[13px] leading-relaxed">
+                <span className="font-mono">MAX_RETRY=2</span> with a 30-second delay between attempts. OpenRouter counts 429 responses against both RPM and RPD — a higher retry ceiling would burn quota the runner needs for new work, which is why retries were lowered from 3 to 2. When the trailing-60-second 429 rate exceeds 30%, the root rate halves for a 5-minute cooldown, then restores automatically. TCP-style congestion response, applied to API rate limits.
+              </p>
+            </div>
+
+            <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5 mb-3">
+              <p className="text-[10px] uppercase tracking-[0.2em] text-[#C8C2B8] mb-3 font-medium">Atomic Checkpointing</p>
+              <p className="text-[#C8C2B8] text-[13px] leading-relaxed">
+                Each result is written as a per-row parquet file via <span className="font-mono">tmp → fsync → os.replace</span> before the next call begins. A crash, power loss, or daily quota exhaustion cannot lose more than one call's worth of state. On startup, the runner reads <span className="font-mono">data/rows/</span> and the consolidated parquet to skip every <span className="font-mono">(prompt_id, model)</span> pair already completed.
+              </p>
+            </div>
+
+            <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5">
+              <p className="text-[10px] uppercase tracking-[0.2em] text-[#C8C2B8] mb-3 font-medium">Quota-Aware Self-Pacing</p>
+              <p className="text-[#C8C2B8] text-[13px] leading-relaxed">
+                On daily quota exhaustion, the runner stays in-process and sleeps until the next 00:01 UTC reset, polling every 5 minutes so it survives a Windows suspend/resume. No external scheduler, no respawn — the runner is itself quota-aware and self-paces across days. Total cost across all 1,200 calls: $0.
               </p>
             </div>
           </motion.div>
@@ -349,30 +695,42 @@ null example: {"factuality":null,"reasoning":null,"instruction_following":0.85,"
           <motion.div custom={8} variants={fadeUp} initial="hidden" animate="show">
             <SectionLabel>05, Leaderboard Schema</SectionLabel>
             <h3 className="font-display text-[#F5F0E8] text-[20px] font-bold tracking-tight mb-5">
-              What Gets Reported Per Model
+              Two Aggregates, One Confidence Interval
             </h3>
+
+            <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5 mb-4">
+              <p className="text-[#C8C2B8] text-[13px] leading-relaxed">
+                Each model is reported under two overall aggregates with zero free parameters between them — both computed from the same parquet, no tuning, no normalisation tricks. <span className="font-mono text-[#F5F0E8]">overall_applicable</span> is the row-wise mean of present (non-NaN) dimensions; <span className="font-mono text-[#F5F0E8]">overall_strict</span> imputes any NaN dimension with the model's own mean on that dimension before averaging, so a model the judge could not score on a dimension gets no free pass. A 95% bootstrap confidence interval (1000× resample, pure numpy, zero quota impact) is rendered on the rankings page as error bars on <span className="font-mono">overall_applicable</span>.
+              </p>
+            </div>
 
             <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5">
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 {[
-                  { col: "Overall Score", desc: "Avg across 4 dims" },
-                  { col: "Factual Accuracy", desc: "Dimension score" },
-                  { col: "Reasoning Coherence", desc: "Dimension score" },
-                  { col: "Instruction Fidelity", desc: "Dimension score" },
-                  { col: "Format Compliance", desc: "Dimension score" },
-                  { col: "Avg Latency p50", desc: "Milliseconds" },
-                  { col: "Avg Latency p95", desc: "Milliseconds" },
-                  { col: "Avg Tokens Used", desc: "Per prompt" },
-                  { col: "Cost per Prompt", desc: "USD" },
-                  { col: "Score per Dollar", desc: "Efficiency index" },
-                  { col: "Category Breakdown", desc: "5 sub-columns, per category avg" },
+                  { col: "overall_applicable",  desc: "Mean of present dims" },
+                  { col: "overall_strict",      desc: "NaN dims imputed by model mean" },
+                  { col: "ci_low / ci_high",    desc: "95% bootstrap CI (1000×)" },
+                  { col: "avg_factuality",      desc: "Dimension mean" },
+                  { col: "avg_reasoning",       desc: "Dimension mean" },
+                  { col: "avg_instruction_…",   desc: "Dimension mean" },
+                  { col: "avg_format_…",        desc: "Dimension mean" },
+                  { col: "latency_p50_ms",      desc: "Milliseconds" },
+                  { col: "latency_p95_ms",      desc: "Milliseconds" },
+                  { col: "avg_tokens_used",     desc: "Per prompt" },
+                  { col: "n_judge_empty",       desc: "Diagnostic count" },
+                  { col: "n_fallback",          desc: "Diagnostic count" },
+                  { col: "cat_<category>",      desc: "Per-category mean × 5" },
                 ].map((item) => (
                   <div key={item.col} className="bg-white/[0.03] rounded-lg p-3 border border-white/[0.04]">
-                    <p className="text-[#F5F0E8] text-[12px] font-medium mb-0.5">{item.col}</p>
+                    <p className="text-[#F5F0E8] text-[12px] font-mono mb-0.5">{item.col}</p>
                     <p className="text-[#C8C2B8] text-[11px]">{item.desc}</p>
                   </div>
                 ))}
               </div>
+              <p className="text-[#C8C2B8] text-[12px] leading-relaxed mt-4 pt-4 border-t border-white/[0.06]">
+                <span className="text-[#F5F0E8] text-[11px] uppercase tracking-wider font-medium">Empty-judge handling  </span>
+                When the judge returns an unparseable response, all four dimensions become NaN and <span className="font-mono">judge_empty=True</span> is recorded on the row. Previously, two of the four defaulted to 0.0 — a silent downward bias in the leaderboard. Calibration probes (HELM-style anchor responses) are noted as future work.
+              </p>
             </div>
           </motion.div>
 
@@ -434,7 +792,7 @@ null example: {"factuality":null,"reasoning":null,"instruction_following":0.85,"
                 </p>
               </div>
               <p className="text-[#C8C2B8] text-[13px] leading-relaxed">
-                Nemotron 3 Super was selected because it is external to the evaluated set on all three axes that matter: provider (NVIDIA vs. OpenAI vs. MiniMax), architecture (dense decoder vs. dense decoder vs. MoE), and training data (no known overlap with GPT-OSS or MiniMax M2.5 fine-tuning corpora). The judge's reasoning traces are logged in full for every call, so the bias profile is auditable, not assumed away.
+                Nemotron 3 Super was selected because it is external to the evaluated set on the axes that matter: provider (NVIDIA vs. MoonshotAI vs. Google vs. OpenAI), training lineage (no known overlap with the Kimi, Gemma, or GPT-OSS post-training corpora), and access path (a separate provider on OpenRouter, not co-tenanted with any evaluator). The judge's reasoning traces are logged in full for every call, so the bias profile is auditable, not assumed away.
               </p>
             </div>
           </motion.div>
