@@ -1,4 +1,5 @@
 export interface ModelPerformance {
+  rank: number;
   model: string;
   overallScore: number;
   overallStrict?: number;
@@ -9,5 +10,14 @@ export interface ModelPerformance {
   instructionFollowing: number;
   formatCompliance: number;
   costPerPrompt: number;
-  latencyP50: number;
+  latencyP50Ms: number;
+  latencyP95Ms: number;
+  nPrompts: number;
+  nJudgeEmpty: number;
+  nFallback: number;
+  catFactualRecall: number;
+  catMultiStepReasoning: number;
+  catInstructionFollowing: number;
+  catCodeGeneration: number;
+  catAdversarialEdgeCases: number;
 }

@@ -32,8 +32,8 @@ export function Dimensions() {
       <div className="pointer-events-auto">
         <BottomRight 
           text="How each model performs across factuality, reasoning, instruction following, and format compliance."
-          ctaText="View Frontier"
-          ctaLink="/frontier"
+          ctaText="Read Methods"
+          ctaLink="/methods"
         />
       </div>
     </motion.div>

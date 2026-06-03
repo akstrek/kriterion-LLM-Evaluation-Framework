@@ -5,7 +5,6 @@ const NAV_LINKS = [
   { name: "Overview", path: "/" },
   { name: "Rankings", path: "/rankings" },
   { name: "Dimensions", path: "/dimensions" },
-  { name: "Frontier", path: "/frontier" },
   { name: "Methods", path: "/methods" },
   { name: "Blog", path: "/blog" },
 ];

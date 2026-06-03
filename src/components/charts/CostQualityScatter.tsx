@@ -1,3 +1,5 @@
+// DEPRECATED — no consumers. Free-tier eval makes cost axis meaningless. Pending removal or repurpose.
+// @ts-nocheck
 import { useEffect, useState } from 'react';
 import { ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList, Cell, Label } from 'recharts';
 import { loadLeaderboard } from '../../lib/loadCsv';

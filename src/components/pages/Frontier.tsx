@@ -1,3 +1,4 @@
+// DEPRECATED — disconnected from routing; not rendered. Do not delete pending repurpose.
 import { motion } from "motion/react";
 import { BottomLeft } from "../layout/BottomLeft";
 import { BottomRight } from "../layout/BottomRight";
