@@ -1,6 +1,7 @@
 import { lazy, Suspense } from "react";
 import { Routes, Route, useLocation } from "react-router-dom";
 import { AnimatePresence } from "motion/react";
+import { Analytics } from "@vercel/analytics/react";
 import { PageFrame } from "./components/layout/PageFrame";
 
 const Overview   = lazy(() => import("./components/pages/Overview").then(m => ({ default: m.Overview })));
@@ -24,6 +25,7 @@ export default function App() {
           <Route path="/blog" element={<Suspense fallback={null}><Blog /></Suspense>} />
         </Routes>
       </AnimatePresence>
+      <Analytics />
     </PageFrame>
   );
 }
