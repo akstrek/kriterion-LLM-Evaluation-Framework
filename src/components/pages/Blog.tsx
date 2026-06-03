@@ -135,6 +135,28 @@ function ArchPill({ type }: { type: ArchType }) {
   );
 }
 
+function CollapsiblePre({ preview, full, headerLeft, headerRight }: { preview: string; full: string; headerLeft: string; headerRight: string }) {
+  const [open, setOpen] = React.useState(false);
+  return (
+    <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] overflow-hidden mb-4">
+      <div className="flex items-center justify-between px-5 py-3 border-b border-white/[0.06]">
+        <span className="text-[10px] uppercase tracking-[0.15em] text-[#C8C2B8]">{headerLeft}</span>
+        <span className="text-[10px] text-[#C8C2B8] font-mono">{headerRight}</span>
+      </div>
+      <pre className="px-5 pt-4 pb-2 text-[11px] text-[#C8C2B8] font-mono leading-relaxed whitespace-pre-wrap overflow-x-auto">{open ? full : preview}</pre>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="w-full flex items-center justify-center gap-2 py-2.5 border-t border-white/[0.04] hover:bg-white/[0.025] transition-colors cursor-pointer"
+      >
+        <span className="text-[9px] uppercase tracking-widest text-[#C8C2B8]/70 font-mono">{open ? "hide full rubric" : "show full rubric"}</span>
+        <ChevronDown className={`text-[#C8C2B8]/70 transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
+      </button>
+    </div>
+  );
+}
+
 function ChevronDown({ className = "" }: { className?: string }) {
   return (
     <svg width="10" height="10" viewBox="0 0 10 10" fill="none" xmlns="http://www.w3.org/2000/svg" className={className}>
@@ -219,8 +241,8 @@ const ModelCard: React.FC<{ data: PrimaryCardData }> = ({ data }) => {
       </div>
 
       {data.alsoFallbackFor && (
-        <p className="text-[10px] text-[#C8C2B8]/70 font-mono mb-3">
-          ↳ also fallback for {data.alsoFallbackFor}
+        <p className="text-[11px] text-[#F5C387]/80 mb-3 leading-snug">
+          Dual-role — primary evaluator <span className="text-[#C8C2B8]">and</span> fallback for {data.alsoFallbackFor}.
         </p>
       )}
 
@@ -270,7 +292,7 @@ const ModelCard: React.FC<{ data: PrimaryCardData }> = ({ data }) => {
         <div className="flex items-center gap-2 pt-3 mt-3 border-t border-white/[0.04]">
           <span className="text-[9px] uppercase tracking-widest text-[#C8C2B8]/60 font-mono">fallback →</span>
           <span className="text-[#C8C2B8] text-[10px] font-mono truncate flex-1">{data.crossRefFallback!.primaryId}</span>
-          <span className="text-[10px] text-[#C8C2B8]/60 italic">(see {data.crossRefFallback!.displayName} above)</span>
+          <span className="text-[10px] text-[#C8C2B8]/70">(↑ see card above)</span>
         </div>
       )}
     </div>
@@ -395,8 +417,8 @@ export function Blog() {
               How Kriterion Evaluates LLMs Without Trusting Any of Them
             </h2>
             <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5">
-              <p className="text-[#C8C2B8] text-[14px] leading-relaxed max-w-[580px]">
-                A transparent walkthrough of the evaluation dimensions, prompt taxonomy, judge architecture, and reproducibility choices that make Kriterion's rankings defensible.
+              <p className="text-[#F5F0E8] text-[14px] leading-relaxed max-w-[600px]">
+                <span className="font-mono text-[#F5C387]">1,200</span> API calls. <span className="font-mono text-[#F5C387]">4</span> architecturally independent models. Two open-source rate-limiting algorithms from <span className="font-mono text-[#F5C387]">1996</span> and <span className="font-mono text-[#F5C387]">2002</span>. Total cost: <span className="font-mono text-[#F5C387]">$0</span>.
               </p>
             </div>
           </motion.div>
@@ -408,9 +430,46 @@ export function Blog() {
               Traffic Shaping the Free Tier
             </h3>
             <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5 space-y-4">
-              <p className="text-[#C8C2B8] text-[13px] leading-relaxed">
-                The OpenRouter free tier is a hard-capped multi-tenant resource: 20 RPM, 1000 RPD, no paid fallback. The disciplined port treats it as network traffic shaping, not a counter.
+              <p className="text-[10px] uppercase tracking-[0.2em] text-[#C8C2B8]/70 font-medium">
+                Before the methodology — the constraint that shaped every decision below
               </p>
+              <p className="text-[#F5F0E8] text-[14px] leading-relaxed font-semibold">
+                Treated as network traffic shaping, not rate-limit accounting.
+              </p>
+              <p className="text-[#C8C2B8] text-[13px] leading-relaxed">
+                The OpenRouter free tier is a hard-capped multi-tenant resource: 20 RPM, 1000 RPD, no paid fallback. The disciplined port borrows the toolkit Linux uses for network qdiscs.
+              </p>
+
+              {/* HTB tree visual — concrete picture of the abstract pill below */}
+              <div className="bg-white/[0.03] rounded-lg p-4 border border-white/[0.05]">
+                <p className="text-[10px] uppercase tracking-[0.15em] text-[#C8C2B8]/70 mb-3 font-medium">HTB tree — leaf width ∝ RPD share</p>
+                <svg viewBox="0 0 480 130" width="100%" height="130" aria-hidden="true" className="overflow-visible">
+                  {/* root */}
+                  <rect x="180" y="6" width="120" height="26" rx="6" fill="rgba(245,195,135,0.12)" stroke="rgba(245,195,135,0.45)" />
+                  <text x="240" y="23" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="11" fill="#F5C387">root · 950 RPD</text>
+                  {/* connectors */}
+                  <path d="M240 32 L240 50 M70 50 L410 50 M70 50 L70 64 M180 50 L180 64 M290 50 L290 64 M410 50 L410 64" stroke="rgba(245,240,232,0.25)" strokeWidth="1" fill="none" />
+                  {/* leaves — widths proportional to RPD: nvidia 300, openai 163, moonshotai 163, google 325 */}
+                  <rect x="14" y="64" width="112" height="26" rx="5" fill="rgba(245,240,232,0.05)" stroke="rgba(245,240,232,0.18)" />
+                  <text x="70" y="81" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="10" fill="#F5F0E8">nvidia · 300</text>
+                  <text x="70" y="106" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="9" fill="#C8C2B8">judge</text>
+
+                  <rect x="119" y="64" width="61" height="26" rx="5" fill="rgba(245,240,232,0.05)" stroke="rgba(245,240,232,0.18)" />
+                  <text x="150" y="81" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="10" fill="#F5F0E8">openai · 163</text>
+                  <text x="150" y="106" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="9" fill="#C8C2B8">gpt-oss</text>
+
+                  <rect x="229" y="64" width="61" height="26" rx="5" fill="rgba(245,240,232,0.05)" stroke="rgba(245,240,232,0.18)" />
+                  <text x="260" y="81" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="10" fill="#F5F0E8">moon · 163</text>
+                  <text x="260" y="106" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="9" fill="#C8C2B8">kimi</text>
+
+                  <rect x="289" y="64" width="121" height="26" rx="5" fill="rgba(245,240,232,0.05)" stroke="rgba(245,240,232,0.18)" />
+                  <text x="349" y="81" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="10" fill="#F5F0E8">google · 325</text>
+                  <text x="349" y="106" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="9" fill="#C8C2B8">gemma + landing pad</text>
+
+                  <text x="240" y="126" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="9" fill="rgba(200,194,184,0.6)">idle siblings lend tokens up to root</text>
+                </svg>
+              </div>
+
               <div className="space-y-2">
                 {[
                   { pill: "HTB",     cite: "Devera, 2002",                text: "Hierarchical Token Bucket — root quota refills continuously; providers borrow when siblings idle." },
@@ -427,9 +486,16 @@ export function Blog() {
                   </div>
                 ))}
               </div>
-              <p className="text-[#F5F0E8] text-[13px] leading-relaxed">
-                <span className="font-mono text-[#C8C2B8]">tc-htb</span> applied to API quota. The runner finishes flush with quota instead of crashing into it.
-              </p>
+
+              {/* tc-htb thesis callout + $0 mic drop */}
+              <div className="flex flex-wrap items-center gap-3 bg-[#C8873A]/10 border border-[#C8873A]/30 rounded-lg p-3">
+                <span className="inline-block px-2 py-1 rounded-md bg-[#C8873A]/25 border border-[#C8873A]/50 text-[#FCD3A0] text-[11px] tracking-wide font-mono font-semibold">
+                  tc-htb on API quota
+                </span>
+                <span className="text-[#F5F0E8] text-[13px] leading-relaxed flex-1 min-w-[200px]">
+                  The runner finishes flush with quota instead of crashing into it. <span className="font-mono text-[#F5C387]">$0</span> across 1,200 calls.
+                </span>
+              </div>
             </div>
           </motion.div>
 
@@ -559,7 +625,7 @@ export function Blog() {
             </h3>
             <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5 mb-5">
               <p className="text-[#C8C2B8] text-[13px] leading-relaxed">
-                <span className="text-[#F5F0E8]">NVIDIA Nemotron 3 Super 120B</span> serves as the sole judge. 200 prompts × 3 evaluators = 600 evaluator calls producing 600 responses. Each response receives 1 judge call — 600 judge calls total, each producing a score dict across 4 dimensions. Total: 1,200 API calls on the happy path; up to 2 retries plus 1 fallback hop on a degraded provider, all counted against the daily quota. Total dimensions scored: 2,400.
+                <span className="text-[#F5F0E8]">NVIDIA Nemotron 3 Super 120B</span> serves as the sole judge. 600 evaluator + 600 judge = <span className="font-mono text-[#F5F0E8]">1,200 calls</span>, <span className="font-mono text-[#F5F0E8]">2,400 dimensions</span> scored. Up to 2 retries plus 1 fallback hop on a degraded provider, all counted against the daily quota.
               </p>
             </div>
 
@@ -573,9 +639,9 @@ export function Blog() {
               ))}
             </div>
 
-            <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5 mb-6">
-              <p className="text-[#C8C2B8] text-[13px] leading-relaxed">
-                Since all 3 evaluators are open-weight models accessed via a single provider, using any of them as judge introduces circularity. The judge must be architecturally independent from every model being evaluated.
+            <div className="flex items-start gap-3 border-l-2 border-white/[0.15] pl-4 mb-6">
+              <p className="text-[#C8C2B8] text-[12px] leading-relaxed italic">
+                Since all 3 evaluators are open-weight models accessed via a single provider, using any of them as judge introduces circularity — the judge must be architecturally independent from every model being evaluated.
               </p>
             </div>
 
@@ -592,13 +658,15 @@ Do not add disclaimers, caveats, or meta-commentary about your response.`}
               </pre>
             </div>
 
-            <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] overflow-hidden mb-4">
-              <div className="flex items-center justify-between px-5 py-3 border-b border-white/[0.06]">
-                <span className="text-[10px] uppercase tracking-[0.15em] text-[#C8C2B8]">Judge System Prompt</span>
-                <span className="text-[10px] text-[#C8C2B8] font-mono">JSON output only</span>
-              </div>
-              <pre className="px-5 py-4 text-[11px] text-[#C8C2B8] font-mono leading-relaxed whitespace-pre-wrap overflow-x-auto">
-{`Score this prompt-response pair. Use full 0.00-1.00 range — most responses
+            <CollapsiblePre
+              headerLeft="Judge System Prompt"
+              headerRight="JSON output only"
+              preview={`Score this prompt-response pair. Use full 0.00-1.00 range — most responses
+score 0.40-0.85, not 1.00.
+
+factuality · reasoning · instruction_following · format_compliance
+each scored 0.00–1.00 (or null when inapplicable).`}
+              full={`Score this prompt-response pair. Use full 0.00-1.00 range — most responses
 score 0.40-0.85, not 1.00.
 
 factuality: claim accuracy. 1.00=every claim verifiable. 0.85=minor imprecision.
@@ -622,8 +690,7 @@ Reward: precision, completeness within minimal tokens.
 Return JSON only:
 {"factuality":0.00,"reasoning":0.00,"instruction_following":0.00,"format_compliance":0.00}
 null example: {"factuality":null,"reasoning":null,"instruction_following":0.85,"format_compliance":0.92}`}
-              </pre>
-            </div>
+            />
 
             <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5">
               <p className="text-[#C8C2B8] text-[12px] leading-relaxed mb-4">
@@ -667,25 +734,30 @@ borrow: any leaf may consume idle siblings' tokens up to root`}
               </p>
             </div>
 
-            <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5 mb-3">
-              <p className="text-[10px] uppercase tracking-[0.2em] text-[#C8C2B8] mb-3 font-medium">Retry and Adaptive Throttle</p>
-              <p className="text-[#C8C2B8] text-[13px] leading-relaxed">
-                <span className="font-mono">MAX_RETRY=2</span> with a 30-second delay between attempts. OpenRouter counts 429 responses against both RPM and RPD — a higher retry ceiling would burn quota the runner needs for new work, which is why retries were lowered from 3 to 2. When the trailing-60-second 429 rate exceeds 30%, the root rate halves for a 5-minute cooldown, then restores automatically. TCP-style congestion response, applied to API rate limits.
-              </p>
-            </div>
-
-            <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5 mb-3">
-              <p className="text-[10px] uppercase tracking-[0.2em] text-[#C8C2B8] mb-3 font-medium">Atomic Checkpointing</p>
-              <p className="text-[#C8C2B8] text-[13px] leading-relaxed">
-                Each result is written as a per-row parquet file via <span className="font-mono">tmp → fsync → os.replace</span> before the next call begins. A crash, power loss, or daily quota exhaustion cannot lose more than one call's worth of state. On startup, the runner reads <span className="font-mono">data/rows/</span> and the consolidated parquet to skip every <span className="font-mono">(prompt_id, model)</span> pair already completed.
-              </p>
-            </div>
-
-            <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5">
-              <p className="text-[10px] uppercase tracking-[0.2em] text-[#C8C2B8] mb-3 font-medium">Quota-Aware Self-Pacing</p>
-              <p className="text-[#C8C2B8] text-[13px] leading-relaxed">
-                On daily quota exhaustion, the runner stays in-process and sleeps until the next 00:01 UTC reset, polling every 5 minutes so it survives a Windows suspend/resume. No external scheduler, no respawn — the runner is itself quota-aware and self-paces across days. Total cost across all 1,200 calls: $0.
-              </p>
+            {/* Compact strip — three subordinate concerns sharing one container, breaking the rhythm of the two big cards above */}
+            <div className="bg-[rgba(10,8,6,0.45)] backdrop-blur-2xl rounded-2xl border border-white/[0.05] overflow-hidden">
+              {[
+                {
+                  label: "Retry + Adaptive Throttle",
+                  body: (<><span className="font-mono text-[#F5F0E8]">MAX_RETRY=2</span>, 30s delay. 429 counts against RPM and RPD, so a higher ceiling would burn quota. Trailing-60s 429 rate &gt; 30% halves the root for a 5-minute cooldown — TCP-style congestion response on API rate limits.</>),
+                },
+                {
+                  label: "Atomic Checkpointing",
+                  body: (<>Each result writes as a per-row parquet via <span className="font-mono text-[#F5F0E8]">tmp → fsync → os.replace</span> before the next call. Crashes lose ≤ one call. On startup the runner skips every <span className="font-mono text-[#F5F0E8]">(prompt_id, model)</span> already on disk.</>),
+                },
+                {
+                  label: "Quota-Aware Self-Pacing",
+                  body: (<>On quota exhaustion the runner stays in-process and sleeps to the next 00:01 UTC reset, polling every 5 min so it survives Windows suspend/resume. No external scheduler, no respawn.</>),
+                },
+              ].map((row, i, arr) => (
+                <div
+                  key={row.label}
+                  className={`grid grid-cols-[180px_1fr] gap-5 px-5 py-4 ${i < arr.length - 1 ? "border-b border-white/[0.04]" : ""}`}
+                >
+                  <p className="text-[10px] uppercase tracking-[0.18em] text-[#C8C2B8] font-medium pt-0.5">{row.label}</p>
+                  <p className="text-[#C8C2B8] text-[12px] leading-relaxed">{row.body}</p>
+                </div>
+              ))}
             </div>
           </motion.div>
 
@@ -699,8 +771,11 @@ borrow: any leaf may consume idle siblings' tokens up to root`}
             </h3>
 
             <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5 mb-4">
+              <p className="text-[#F5F0E8] text-[14px] leading-relaxed font-semibold mb-3">
+                Two aggregates so you can't argue the ranking depends on how nulls are handled.
+              </p>
               <p className="text-[#C8C2B8] text-[13px] leading-relaxed">
-                Each model is reported under two overall aggregates with zero free parameters between them — both computed from the same parquet, no tuning, no normalisation tricks. <span className="font-mono text-[#F5F0E8]">overall_applicable</span> is the row-wise mean of present (non-NaN) dimensions; <span className="font-mono text-[#F5F0E8]">overall_strict</span> imputes any NaN dimension with the model's own mean on that dimension before averaging, so a model the judge could not score on a dimension gets no free pass. A 95% bootstrap confidence interval (1000× resample, pure numpy, zero quota impact) is rendered on the rankings page as error bars on <span className="font-mono">overall_applicable</span>.
+                Both computed from the same parquet, no tuning, no normalisation tricks. <span className="font-mono text-[#F5F0E8]">overall_applicable</span> is the row-wise mean of present (non-NaN) dimensions; <span className="font-mono text-[#F5F0E8]">overall_strict</span> imputes any NaN dimension with the model's own mean before averaging, so a model the judge could not score gets no free pass. A 95% bootstrap CI (1000× resample, pure numpy, zero quota impact) renders as error bars on <span className="font-mono">overall_applicable</span>.
               </p>
             </div>
 
@@ -710,10 +785,7 @@ borrow: any leaf may consume idle siblings' tokens up to root`}
                   { col: "overall_applicable",  desc: "Mean of present dims" },
                   { col: "overall_strict",      desc: "NaN dims imputed by model mean" },
                   { col: "ci_low / ci_high",    desc: "95% bootstrap CI (1000×)" },
-                  { col: "avg_factuality",      desc: "Dimension mean" },
-                  { col: "avg_reasoning",       desc: "Dimension mean" },
-                  { col: "avg_instruction_…",   desc: "Dimension mean" },
-                  { col: "avg_format_…",        desc: "Dimension mean" },
+                  { col: "avg_<dimension> × 4", desc: "Per-dimension mean (factuality, reasoning, instruction_…, format_…)" },
                   { col: "latency_p50_ms",      desc: "Milliseconds" },
                   { col: "latency_p95_ms",      desc: "Milliseconds" },
                   { col: "avg_tokens_used",     desc: "Per prompt" },
@@ -743,34 +815,42 @@ borrow: any leaf may consume idle siblings' tokens up to root`}
               Three Properties That Separate a Benchmark from a Blog Post
             </h3>
 
-            <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               {[
                 {
                   n: "01",
                   title: "External Judge",
-                  body: "The evaluation model shares no architecture, provider, or training data lineage with any evaluated model. This eliminates the self-preferencing bias documented in Zheng et al. (2023), where models systematically rate their own outputs higher. Publishing the judge model identity and every reasoning trace makes the bias profile auditable rather than hidden.",
+                  blogPost: "Same family scores itself",
+                  benchmark: "Judge shares no architecture, provider, or training lineage with any contestant. Self-preferencing bias (Zheng et al., 2023) eliminated; reasoning traces logged.",
                 },
                 {
                   n: "02",
                   title: "Deterministic Where Possible",
-                  body: "Format compliance uses regex and parser checks as the primary scorer, invoking the LLM judge only for genuinely ambiguous edge cases. This means the highest-volume dimension, structural correctness, is reproducible without re-running the judge, and results are stable across repeated evaluations.",
+                  blogPost: "LLM judges every cell",
+                  benchmark: "Format compliance runs regex and parser checks first; the LLM judge sees only genuinely ambiguous edge cases. Reproducible without re-running the judge.",
                 },
                 {
                   n: "03",
                   title: "Full Prompt Suite Published",
-                  body: "All 200 prompts, expected output types, and ground truth labels ship with the repo. Any researcher can rerun the harness against different models, swap the judge, or add dimensions without reverse-engineering the evaluation design. Reproducibility is the difference between a benchmark and a blog post.",
+                  blogPost: "Cherry-picked screenshots",
+                  benchmark: "All 200 prompts, expected output types, and ground truth labels ship with the repo. Swap the judge, add dimensions, rerun — no reverse-engineering required.",
                 },
               ].map((item) => (
                 <div
                   key={item.n}
-                  className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5 flex gap-5"
+                  className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5 flex flex-col"
                 >
-                  <div className="flex-shrink-0">
-                    <span className="font-display text-[32px] font-black text-white/[0.06] leading-none">{item.n}</span>
+                  <div className="flex items-baseline justify-between mb-3">
+                    <p className="text-[#F5F0E8] text-[13px] font-semibold">{item.title}</p>
+                    <span className="font-display text-[28px] font-black text-white/[0.07] leading-none">{item.n}</span>
+                  </div>
+                  <div className="mb-3 pb-3 border-b border-white/[0.05]">
+                    <p className="text-[9px] uppercase tracking-[0.15em] text-[#C8C2B8]/60 mb-1 font-mono">Blog post</p>
+                    <p className="text-[#C8C2B8]/70 text-[12px] leading-snug line-through decoration-[#C8C2B8]/30">{item.blogPost}</p>
                   </div>
                   <div>
-                    <p className="text-[#F5F0E8] text-[14px] font-semibold mb-2">{item.title}</p>
-                    <p className="text-[#C8C2B8] text-[12px] leading-relaxed">{item.body}</p>
+                    <p className="text-[9px] uppercase tracking-[0.15em] text-[#F5C387]/80 mb-1 font-mono">Benchmark</p>
+                    <p className="text-[#C8C2B8] text-[12px] leading-relaxed">{item.benchmark}</p>
                   </div>
                 </div>
               ))}
@@ -797,11 +877,24 @@ borrow: any leaf may consume idle siblings' tokens up to root`}
             </div>
           </motion.div>
 
-          {/* Footer */}
-          <div className="pt-6 pb-2 text-center">
-            <p className="font-sans font-bold text-[#F5F0E8] text-[12px] tracking-wide leading-relaxed">
-              © Kriterion Portfolio | Evaluation underway.<br />Results will be published upon completion.
-            </p>
+          {/* Footer — metric strip closer instead of "evaluation underway" */}
+          <div className="pt-8 pb-2">
+            <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] px-5 py-4">
+              {[
+                { v: "$0",    k: "total cost" },
+                { v: "1,200", k: "API calls" },
+                { v: "2,400", k: "dimensions scored" },
+                { v: "0",     k: "crashes since HTB shipped" },
+              ].map((m, i, arr) => (
+                <React.Fragment key={m.k}>
+                  <div className="flex items-baseline gap-2">
+                    <span className="font-mono text-[#F5C387] text-[15px] font-semibold">{m.v}</span>
+                    <span className="text-[#C8C2B8] text-[11px] uppercase tracking-[0.15em]">{m.k}</span>
+                  </div>
+                  {i < arr.length - 1 && <span className="text-[#C8C2B8]/30">·</span>}
+                </React.Fragment>
+              ))}
+            </div>
           </div>
         </div>
       </ScrollableZone>
