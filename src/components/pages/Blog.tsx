@@ -696,7 +696,7 @@ null example: {"factuality":null,"reasoning":null,"instruction_following":0.85,"
 
             <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5">
               <p className="text-[#C8C2B8] text-[12px] leading-relaxed mb-4">
-                For format compliance, the deterministic parser runs first. If the parse result is unambiguous, valid JSON, valid markdown structure, or clear structural failure, that score is final and Nemotron is not called. Nemotron adjudicates only edge cases where partial compliance makes a binary pass/fail incorrect. Every judge call logs the full reasoning field alongside the score; judge call cost and latency are tracked per dimension.
+                Nemotron scores all four dimensions in a single call, returning one JSON object per evaluator response. Dimensions the prompt does not exercise are returned as <code className="font-mono text-[#E8DFD2]">null</code> (no factual claims → null factuality; no inferential steps → null reasoning) and stored as NaN, so they are excluded from that row's <code className="font-mono text-[#E8DFD2]">overall_applicable</code> mean rather than penalised. Judge latency and token count are logged per call.
               </p>
               <p className="text-[#C8C2B8] text-[12px] leading-relaxed">
                 Evaluator responses are truncated to 1,500 characters (cap at ~375 tokens) before being sent to the judge. This reduces judge input size by 30 to 40 percent, keeping calls within free-tier upstream capacity limits and preventing upstream throttling. The truncation threshold was chosen to preserve the substantive content of any response while eliminating padding and repetition.
