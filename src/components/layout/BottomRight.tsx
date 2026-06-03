@@ -13,14 +13,14 @@ export function BottomRight({ text, ctaText, ctaLink, isOverview = false }: Bott
     <div className={cn(
       "fixed z-10 pointer-events-auto",
       isOverview
-        ? "bottom-6 right-5 md:bottom-8 md:right-8 flex flex-col items-end gap-3"
-        : "bottom-4 right-5 md:right-6 flex flex-row items-center gap-4 md:gap-6"
+        ? "top-[68px] right-4 md:top-auto md:bottom-8 md:right-8 flex flex-col items-end gap-2 md:gap-3"
+        : "bottom-3 right-3 md:bottom-4 md:right-6 flex flex-col items-end gap-2 md:flex-row md:items-center md:gap-6 max-w-[calc(100vw-1.5rem)]"
     )}>
       <p className={cn(
         "m-0 text-right",
         isOverview
-          ? "font-display font-black tracking-[-0.04em] leading-tight text-black text-[6vw] md:text-[3vw] xl:text-[2.8vw] max-w-[55vw] md:max-w-[42vw]"
-          : "font-sans leading-relaxed text-[#C8C2B8] text-[11px] md:text-[12px] max-w-[350px]"
+          ? "font-display font-black tracking-[-0.03em] leading-[1.05] text-black text-[3.4vw] md:text-[1.7vw] xl:text-[1.55vw] max-w-[55vw] md:max-w-[24vw] whitespace-pre-line"
+          : "font-sans leading-snug text-[#C8C2B8] text-[10px] md:text-[12px] max-w-[200px] md:max-w-[350px]"
       )}>
         {text}
       </p>

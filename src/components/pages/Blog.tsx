@@ -443,7 +443,8 @@ export function Blog() {
               {/* HTB tree visual — concrete picture of the abstract pill below */}
               <div className="bg-white/[0.03] rounded-lg p-4 border border-white/[0.05]">
                 <p className="text-[10px] uppercase tracking-[0.15em] text-[#C8C2B8]/70 mb-3 font-medium">HTB tree — leaf width ∝ RPD share</p>
-                <svg viewBox="0 0 480 130" width="100%" height="130" aria-hidden="true" className="overflow-visible">
+                <div className="overflow-x-auto -mx-1">
+                <svg viewBox="0 0 480 130" preserveAspectRatio="xMidYMid meet" aria-hidden="true" className="min-w-[440px] w-full h-auto overflow-visible">
                   {/* root */}
                   <rect x="180" y="6" width="120" height="26" rx="6" fill="rgba(245,195,135,0.12)" stroke="rgba(245,195,135,0.45)" />
                   <text x="240" y="23" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="11" fill="#F5C387">root · 950 RPD</text>
@@ -468,6 +469,7 @@ export function Blog() {
 
                   <text x="240" y="126" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="9" fill="rgba(200,194,184,0.6)">idle siblings lend tokens up to root</text>
                 </svg>
+                </div>
               </div>
 
               <div className="space-y-2">
@@ -492,7 +494,7 @@ export function Blog() {
                 <span className="inline-block px-2 py-1 rounded-md bg-[#C8873A]/25 border border-[#C8873A]/50 text-[#FCD3A0] text-[11px] tracking-wide font-mono font-semibold">
                   tc-htb on API quota
                 </span>
-                <span className="text-[#F5F0E8] text-[13px] leading-relaxed flex-1 min-w-[200px]">
+                <span className="text-[#F5F0E8] text-[13px] leading-relaxed flex-1 min-w-0 sm:min-w-[200px]">
                   The runner finishes flush with quota instead of crashing into it. <span className="font-mono text-[#F5C387]">$0</span> across 1,200 calls.
                 </span>
               </div>
@@ -583,10 +585,10 @@ export function Blog() {
 
             <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] overflow-hidden">
               <div className="px-5 pt-5 pb-2">
-                <div className="grid grid-cols-[1fr_auto_auto] text-[10px] uppercase tracking-[0.15em] text-[#C8C2B8] pb-3 border-b border-white/[0.06]">
+                <div className="grid grid-cols-[1fr_auto] sm:grid-cols-[1fr_auto_auto] text-[10px] uppercase tracking-[0.15em] text-[#C8C2B8] pb-3 border-b border-white/[0.06]">
                   <span>Category</span>
-                  <span className="text-right pr-8">Prompt Count</span>
-                  <span className="text-right">What it stresses</span>
+                  <span className="text-right pr-4 sm:pr-8">Count</span>
+                  <span className="text-right hidden sm:inline">What it stresses</span>
                 </div>
               </div>
               <div className="px-5 pb-4 space-y-0">
@@ -599,17 +601,17 @@ export function Blog() {
                 ].map((row, i) => (
                   <div
                     key={row.cat}
-                    className={`grid grid-cols-[1fr_auto_auto] py-3 text-[13px] ${i < 4 ? "border-b border-white/[0.04]" : ""}`}
+                    className={`grid grid-cols-[1fr_auto] sm:grid-cols-[1fr_auto_auto] py-3 text-[13px] ${i < 4 ? "border-b border-white/[0.04]" : ""}`}
                   >
                     <span className="text-[#F5F0E8]">{row.cat}</span>
-                    <span className="text-[#C8C2B8] font-mono text-[12px] text-right pr-8">{row.n}</span>
-                    <span className="text-[#C8C2B8] text-[12px] text-right">{row.stress}</span>
+                    <span className="text-[#C8C2B8] font-mono text-[12px] text-right pr-4 sm:pr-8">{row.n}</span>
+                    <span className="text-[#C8C2B8] text-[12px] text-right hidden sm:inline">{row.stress}</span>
                   </div>
                 ))}
-                <div className="grid grid-cols-[1fr_auto_auto] py-3 border-t border-white/[0.08] mt-1">
+                <div className="grid grid-cols-[1fr_auto] sm:grid-cols-[1fr_auto_auto] py-3 border-t border-white/[0.08] mt-1">
                   <span className="text-[#F5F0E8] text-[13px] font-semibold">Total</span>
-                  <span className="text-[#F5F0E8] font-mono text-[13px] font-semibold text-right pr-8">200</span>
-                  <span className="text-[#C8C2B8] text-[12px] text-right">× 3 models = 600 responses</span>
+                  <span className="text-[#F5F0E8] font-mono text-[13px] font-semibold text-right pr-4 sm:pr-8">200</span>
+                  <span className="text-[#C8C2B8] text-[12px] text-right hidden sm:inline">× 3 models = 600 responses</span>
                 </div>
               </div>
             </div>
@@ -752,7 +754,7 @@ borrow: any leaf may consume idle siblings' tokens up to root`}
               ].map((row, i, arr) => (
                 <div
                   key={row.label}
-                  className={`grid grid-cols-[180px_1fr] gap-5 px-5 py-4 ${i < arr.length - 1 ? "border-b border-white/[0.04]" : ""}`}
+                  className={`grid grid-cols-1 sm:grid-cols-[180px_1fr] gap-2 sm:gap-5 px-5 py-4 ${i < arr.length - 1 ? "border-b border-white/[0.04]" : ""}`}
                 >
                   <p className="text-[10px] uppercase tracking-[0.18em] text-[#C8C2B8] font-medium pt-0.5">{row.label}</p>
                   <p className="text-[#C8C2B8] text-[12px] leading-relaxed">{row.body}</p>
@@ -780,7 +782,7 @@ borrow: any leaf may consume idle siblings' tokens up to root`}
             </div>
 
             <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5">
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                 {[
                   { col: "overall_applicable",  desc: "Mean of present dims" },
                   { col: "overall_strict",      desc: "NaN dims imputed by model mean" },
@@ -815,7 +817,7 @@ borrow: any leaf may consume idle siblings' tokens up to root`}
               Three Properties That Separate a Benchmark from a Blog Post
             </h3>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
               {[
                 {
                   n: "01",

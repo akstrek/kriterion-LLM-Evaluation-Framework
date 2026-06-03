@@ -208,7 +208,7 @@ kriterion/
 │   ├── components/
 │   │   ├── charts/        # Recharts visualizations
 │   │   ├── layout/        # Navbar, PageFrame, ScrollableZone, BottomLeft/Right
-│   │   └── pages/         # Overview, Rankings, Dimensions, Frontier, Methods, Blog
+│   │   └── pages/         # Overview, Rankings, Dimensions, Methods, Blog
 │   └── lib/loadCsv.ts     # CSV loader with fallback demo data
 ├── project.md             # Architecture decisions + task log
 └── requirements.txt

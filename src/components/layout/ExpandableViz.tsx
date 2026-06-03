@@ -25,10 +25,11 @@ export function ExpandableViz({ children }: ExpandableVizProps) {
     <>
       <div className="relative group w-full h-full pointer-events-auto">
         <button
+          aria-label="Expand"
           onClick={() => setIsExpanded(true)}
-          className="absolute -top-3 -right-3 z-[60] p-1.5 text-[#C8C2B8]/40 hover:text-[#C8C2B8] hover:bg-[rgba(255,255,255,0.1)] opacity-0 group-hover:opacity-100 transition-all bg-[rgba(10,8,6,0.95)] rounded-md shadow-2xl border border-white/[0.1] backdrop-blur-md cursor-pointer"
+          className="absolute top-2 right-2 md:-top-3 md:-right-3 z-[60] p-2 md:p-1.5 text-[#C8C2B8] hover:text-[#F5F0E8] hover:bg-[rgba(255,255,255,0.1)] opacity-70 md:opacity-0 md:group-hover:opacity-100 transition-all bg-[rgba(10,8,6,0.95)] rounded-md shadow-2xl border border-white/[0.1] backdrop-blur-md cursor-pointer"
         >
-          <Expand className="w-4 h-4" />
+          <Expand className="w-5 h-5 md:w-4 md:h-4" />
         </button>
         {children}
       </div>
@@ -40,7 +41,7 @@ export function ExpandableViz({ children }: ExpandableVizProps) {
             animate={{ opacity: 1, backdropFilter: "blur(24px)" }}
             exit={{ opacity: 0, backdropFilter: "blur(0px)" }}
             transition={{ duration: 0.3, ease: "easeOut" }}
-            className="fixed inset-0 z-[100] bg-[rgba(10,8,6,0.90)] p-6 md:p-12 lg:p-20 flex flex-col pointer-events-auto overflow-y-auto"
+            className="fixed inset-0 z-[100] bg-[rgba(10,8,6,0.90)] p-4 sm:p-6 md:p-12 lg:p-20 flex flex-col pointer-events-auto overflow-y-auto"
           >
             <button
               onClick={() => setIsExpanded(false)}
@@ -48,10 +49,9 @@ export function ExpandableViz({ children }: ExpandableVizProps) {
             >
               <Shrink className="w-5 h-5" />
             </button>
-            <div className="flex-1 w-full h-full min-h-[500px] flex px-4">
+            <div className="flex-1 w-full h-full min-h-[400px] sm:min-h-[500px] flex px-0 sm:px-4">
               <div className="w-full h-full max-w-7xl mx-auto relative flex flex-col items-center justify-center">
-                 {/* Re-rendering children taking up max height possible, using clone element if possible to enforce h-full, but flex-col works well */}
-                 <div className="w-full scale-[1.1] sm:scale-100 origin-center transition-transform">
+                 <div className="w-full origin-center">
                    {children}
                  </div>
               </div>

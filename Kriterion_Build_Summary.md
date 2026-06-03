@@ -53,7 +53,7 @@ Minimal and neutral. Instructs model to answer directly, follow format instructi
 Judge (Nemotron only):
 Score-anchored rubric with explicit 0.85/0.60/0.30 reference points per dimension. Includes penalty for hedging, padding, repetition. Reward for precision and completeness. Concrete null usage examples. Compressed to ~180 tokens.
 Frontend
-React + Vite + TypeScript + Tailwind + Shadcn UI + Recharts. Built via Google AI Studio scaffold, then wired to data via Claude Code. Neo-brutalist design system with cream monochromatic aesthetic, Poppy (#D8560E) as primary accent. Dark mode toggle. Expandable chart overlays. Pages: Overview, Rankings, Dimensions, Frontier, Methods, Blog.
+React + Vite + TypeScript + Tailwind + Shadcn UI + Recharts. Built via Google AI Studio scaffold, then wired to data via Claude Code. Neo-brutalist design system with cream monochromatic aesthetic, Poppy (#D8560E) as primary accent. Dark mode toggle. Expandable chart overlays. Pages: Overview, Rankings, Dimensions, Methods, Blog.
 Hardcoded fallback data for three models with scores, costs, and latency values. Dashboard reads from public/data/leaderboard.csv and public/data/eval_results.csv via src/lib/loadCsv.ts.
 Backend
 No live backend. Python eval harness runs locally once, outputs CSVs. Dashboard is a static site on Vercel. No Modal, no Railway, no FastAPI.

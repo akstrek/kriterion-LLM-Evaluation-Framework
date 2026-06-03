@@ -3,6 +3,7 @@ import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, LabelList } from "rec
 import { loadLeaderboard } from "../../lib/loadCsv";
 import { ModelPerformance } from "../../types";
 import { buildModelColors, modelDisplayName } from "../../lib/modelColors";
+import { useIsMobile } from "../../lib/useIsMobile";
 
 const CATEGORIES: { key: keyof ModelPerformance; label: string }[] = [
   { key: "catFactualRecall", label: "Factual recall" },
@@ -13,6 +14,7 @@ const CATEGORIES: { key: keyof ModelPerformance; label: string }[] = [
 ];
 
 function CategoryBars({ row, color }: { row: ModelPerformance; color: string }) {
+  const isMobile = useIsMobile();
   const data = CATEGORIES.map((c) => ({
     name: c.label,
     score: ((row[c.key] as number) ?? 0) * 100,
@@ -26,8 +28,8 @@ function CategoryBars({ row, color }: { row: ModelPerformance; color: string }) 
             type="category"
             dataKey="name"
             stroke="#C8C2B8"
-            fontSize={11}
-            width={170}
+            fontSize={isMobile ? 10 : 11}
+            width={isMobile ? 100 : 170}
             tickLine={false}
             axisLine={false}
           />
@@ -78,21 +80,21 @@ export function LeaderboardTable() {
     lo !== undefined && hi !== undefined ? `[${(lo * 100).toFixed(1)} – ${(hi * 100).toFixed(1)}]` : "—";
 
   return (
-    <div className="w-full max-w-5xl mx-auto bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl p-8 border border-white/[0.06] shadow-2xl overflow-x-auto">
-      <table className="w-full text-left border-collapse min-w-[920px]">
+    <div className="w-full max-w-5xl mx-auto bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl p-4 sm:p-6 md:p-8 border border-white/[0.06] shadow-2xl overflow-x-auto">
+      <table className="w-full text-left border-collapse min-w-[520px] md:min-w-[920px]">
         <thead className="border-b border-white/[0.1]">
           <tr className="text-[#F5F0E8] text-[10px] uppercase tracking-[0.12em]">
             <th className="pb-4 pr-2 font-semibold w-8"></th>
             <th className="pb-4 pr-2 font-semibold text-right w-10">Rank</th>
             <th className="pb-4 font-semibold">Model</th>
             <th className="pb-4 font-semibold text-right">Overall</th>
-            <th className="pb-4 font-semibold text-right">Factuality</th>
-            <th className="pb-4 font-semibold text-right">Reasoning</th>
-            <th className="pb-4 font-semibold text-right">Instruct</th>
-            <th className="pb-4 font-semibold text-right">Format</th>
-            <th className="pb-4 font-semibold text-right pl-4">Latency P50</th>
-            <th className="pb-4 font-semibold text-right">Prompts</th>
-            <th className="pb-4 font-semibold text-right">Fallbacks</th>
+            <th className="pb-4 font-semibold text-right hidden sm:table-cell">Factuality</th>
+            <th className="pb-4 font-semibold text-right hidden sm:table-cell">Reasoning</th>
+            <th className="pb-4 font-semibold text-right hidden sm:table-cell">Instruct</th>
+            <th className="pb-4 font-semibold text-right hidden sm:table-cell">Format</th>
+            <th className="pb-4 font-semibold text-right pl-4 hidden md:table-cell">Latency P50</th>
+            <th className="pb-4 font-semibold text-right hidden md:table-cell">Prompts</th>
+            <th className="pb-4 font-semibold text-right hidden md:table-cell">Fallbacks</th>
           </tr>
         </thead>
         <tbody className="text-[#C8C2B8] text-[13px]">
@@ -116,33 +118,33 @@ export function LeaderboardTable() {
                     <div className="text-[#C8873A] font-medium">{fmt(row.overallScore)}</div>
                     <div className="text-[10px] text-[#C8C2B8]/70 font-mono mt-0.5">{fmtCi(row.ciLow, row.ciHigh)}</div>
                   </td>
-                  <td className="py-4 px-4 text-right">
+                  <td className="py-4 px-4 text-right hidden sm:table-cell">
                     <span className={row.factuality === bestFactuality ? "border-b border-[#F5F0E8] text-[#F5F0E8]" : ""}>
                       {fmt(row.factuality)}
                     </span>
                   </td>
-                  <td className="py-4 px-4 text-right">
+                  <td className="py-4 px-4 text-right hidden sm:table-cell">
                     <span className={row.reasoning === bestReasoning ? "border-b border-[#F5F0E8] text-[#F5F0E8]" : ""}>
                       {fmt(row.reasoning)}
                     </span>
                   </td>
-                  <td className="py-4 px-4 text-right">
+                  <td className="py-4 px-4 text-right hidden sm:table-cell">
                     <span className={row.instructionFollowing === bestInstruction ? "border-b border-[#F5F0E8] text-[#F5F0E8]" : ""}>
                       {fmt(row.instructionFollowing)}
                     </span>
                   </td>
-                  <td className="py-4 px-4 text-right">
+                  <td className="py-4 px-4 text-right hidden sm:table-cell">
                     <span className={row.formatCompliance === bestFormat ? "border-b border-[#F5F0E8] text-[#F5F0E8]" : ""}>
                       {fmt(row.formatCompliance)}
                     </span>
                   </td>
-                  <td className="py-4 pr-4 pl-4 text-right font-mono">
+                  <td className="py-4 pr-4 pl-4 text-right font-mono hidden md:table-cell">
                     <span className={row.latencyP50Ms === bestLatency ? "border-b border-[#F5F0E8] text-[#F5F0E8]" : ""}>
                       {Math.round(row.latencyP50Ms)}ms
                     </span>
                   </td>
-                  <td className="py-4 px-4 text-right font-mono">{row.nPrompts}</td>
-                  <td className="py-4 px-4 text-right font-mono">{row.nFallback}</td>
+                  <td className="py-4 px-4 text-right font-mono hidden md:table-cell">{row.nPrompts}</td>
+                  <td className="py-4 px-4 text-right font-mono hidden md:table-cell">{row.nFallback}</td>
                 </tr>
                 {isOpen && (
                   <tr className="bg-white/[0.02]">

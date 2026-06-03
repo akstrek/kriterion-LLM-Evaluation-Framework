@@ -3,6 +3,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Cell, 
 import { loadEvalResults, loadDimensions } from '../../lib/loadCsv';
 import { ModelPerformance } from '../../types';
 import { buildModelColors, modelDisplayName } from '../../lib/modelColors';
+import { useIsMobile } from '../../lib/useIsMobile';
 
 const DimTooltip = ({ active, payload }: any) => {
   if (active && payload && payload.length) {
@@ -21,6 +22,7 @@ export function DimensionDeepDive() {
   const [data, setData] = useState<ModelPerformance[]>([]);
   const [dimensions, setDimensions] = useState<string[]>([]);
   const [selectedDimension, setSelectedDimension] = useState<string>("Factuality");
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     loadEvalResults().then(setData);
@@ -51,7 +53,7 @@ export function DimensionDeepDive() {
     .sort((a, b) => b.score - a.score);
 
   return (
-    <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl p-8 border border-white/[0.06] shadow-2xl">
+    <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl p-4 sm:p-6 md:p-8 border border-white/[0.06] shadow-2xl">
       <div className="flex justify-between items-center mb-6">
         <h3 className="text-[#F5F0E8] text-[16px] font-display">Deep Dive</h3>
         <select
@@ -74,8 +76,8 @@ export function DimensionDeepDive() {
               type="category"
               dataKey="name"
               stroke="#F5F0E8"
-              fontSize={11}
-              width={180}
+              fontSize={isMobile ? 10 : 11}
+              width={isMobile ? 96 : 180}
               tickLine={false}
               axisLine={false}
               interval={0}

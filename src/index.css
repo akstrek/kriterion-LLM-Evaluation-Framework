@@ -42,6 +42,16 @@ body {
   height: 100dvh;
 }
 
+/* Honour user preference to reduce motion — flattens Framer/Motion + Tailwind transitions */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* Custom Scrollbar for the scrollable zone */
 ::-webkit-scrollbar {
   width: 4px;

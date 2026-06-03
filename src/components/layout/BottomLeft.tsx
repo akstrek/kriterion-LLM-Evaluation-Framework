@@ -7,10 +7,12 @@ interface BottomLeftProps {
 
 export function BottomLeft({ title, isOverview = false }: BottomLeftProps) {
   return (
-    <div 
+    <div
       className={cn(
         "fixed z-10 pointer-events-none",
-        isOverview ? "bottom-6 left-5 md:bottom-8 md:left-8" : "bottom-4 left-5 md:left-6"
+        isOverview
+          ? "bottom-6 left-5 md:bottom-8 md:left-8"
+          : "hidden md:block bottom-4 left-5 md:left-6"
       )}
     >
       <h1 

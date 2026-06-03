@@ -1,5 +1,6 @@
-import { ReactNode } from "react";
+import { ReactNode, useRef } from "react";
 import { cn } from "../../lib/utils";
+import { ScrollToTop } from "./ScrollToTop";
 
 interface ScrollableZoneProps {
   children: ReactNode;
@@ -7,11 +8,14 @@ interface ScrollableZoneProps {
 }
 
 export function ScrollableZone({ children, className }: ScrollableZoneProps) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+
   return (
     <div className="fixed inset-0 top-[60px] pb-[56px] z-[5] pointer-events-none flex items-center justify-center">
-      <div 
+      <div
+        ref={scrollRef}
         className={cn(
-          "w-[90%] lg:w-[80%] max-h-full overflow-y-auto pointer-events-auto",
+          "w-[92%] sm:w-[90%] lg:w-[80%] max-h-full overflow-y-auto pointer-events-auto",
           className
         )}
       >
@@ -19,6 +23,7 @@ export function ScrollableZone({ children, className }: ScrollableZoneProps) {
           {children}
         </div>
       </div>
+      <ScrollToTop scrollRef={scrollRef} />
     </div>
   );
 }
