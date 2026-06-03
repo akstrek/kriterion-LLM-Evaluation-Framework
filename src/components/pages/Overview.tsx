@@ -18,7 +18,7 @@ export function Overview() {
       
       <div className="pointer-events-auto">
         <BottomRight 
-          text={"200 prompts.\n3 competitors.\n1 ruthless judge.\nHere is who won."}
+          text={"600 prompts.\n3 competitors.\n1 ruthless judge.\nHere is who won."}
           ctaText="Explore Blog"
           ctaLink="/blog"
           isOverview={true}

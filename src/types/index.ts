@@ -9,6 +9,7 @@ export interface ModelPerformance {
   reasoning: number;
   instructionFollowing: number;
   formatCompliance: number;
+  verbosity: number;
   costPerPrompt: number;
   latencyP50Ms: number;
   latencyP95Ms: number;
@@ -19,5 +20,18 @@ export interface ModelPerformance {
   catMultiStepReasoning: number;
   catInstructionFollowing: number;
   catCodeGeneration: number;
-  catAdversarialEdgeCases: number;
+  catSafetyCalibration: number;
+  catHallucinationUnderUncertainty: number;
+}
+
+export interface ModelDifficultyRow {
+  model: string;
+  difficulty: "easy" | "medium" | "hard" | "expert";
+  overallScore: number;
+  factuality: number;
+  reasoning: number;
+  instructionFollowing: number;
+  formatCompliance: number;
+  verbosity: number;
+  nPrompts: number;
 }

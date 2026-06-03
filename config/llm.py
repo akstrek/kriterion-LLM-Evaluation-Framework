@@ -78,9 +78,10 @@ factuality: claim accuracy. 1.00=every claim verifiable. 0.85=minor imprecision.
 reasoning: inferential validity AND depth. 1.00=correct + insightful. 0.85=correct but shallow. 0.60=mostly correct, one weak step. 0.30=flawed logic. 0.00=incoherent. null if no reasoning required.
 instruction_following: constraint satisfaction. Count explicit constraints (length, format, scope, exclusions). Score = constraints_met / constraints_total. Partial credit per constraint. Score implied intent if none explicit.
 format_compliance: structural exactness. 1.00=perfect structure. 0.85=correct structure, minor deviation. 0.60=right format, wrong details. 0.30=wrong format. 0.00=no structure attempted.
-Penalize: hedging, padding, unnecessary preamble, repetition. Reward: precision, completeness within minimal tokens.
-Return JSON only: {"factuality":0.00,"reasoning":0.00,"instruction_following":0.00,"format_compliance":0.00}
-null example: {"factuality":null,"reasoning":null,"instruction_following":0.85,"format_compliance":0.92}"""
+verbosity: conciseness relative to task. 1.00=optimal length, no padding. 0.85=slightly verbose. 0.60=noticeable padding or hedging. 0.30=significant bloat. 0.00=severe rambling. Penalize unnecessary preamble, repetition, hedging. Reward precision within minimal tokens.
+When the prompt contains a false premise or unanswerable request, correctly identifying this and declining to fabricate is the high-scoring response; do not penalize absence of factual claims in that case.
+Return JSON only: {"factuality":0.00,"reasoning":0.00,"instruction_following":0.00,"format_compliance":0.00,"verbosity":0.00}
+null example: {"factuality":null,"reasoning":null,"instruction_following":0.85,"format_compliance":0.92,"verbosity":0.78}"""
 
 EVALUATOR_SYSTEM_PROMPT = (
     "You are a helpful, precise AI assistant. Answer the user's prompt directly.\n"

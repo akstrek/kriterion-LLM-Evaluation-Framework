@@ -21,7 +21,8 @@ export function RadarComparison() {
     { key: 'factuality', label: 'Factuality' },
     { key: 'reasoning', label: 'Reasoning' },
     { key: 'instructionFollowing', label: 'Instruct' },
-    { key: 'formatCompliance', label: 'Format' }
+    { key: 'formatCompliance', label: 'Format' },
+    { key: 'verbosity', label: 'Verbosity' }
   ];
 
   const radarData = dimensions.map(d => {

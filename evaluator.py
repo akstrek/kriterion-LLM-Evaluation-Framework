@@ -6,8 +6,11 @@ Two public functions used by batch_eval.py and testable standalone.
   score_response(prompt_obj, response_text) → dict
 
 Both now route through config.llm.call_model(..., role=...). Empty/unparseable
-judge responses produce NaN on ALL FOUR dimensions and set judge_empty=True
+judge responses produce NaN on ALL FIVE dimensions and set judge_empty=True
 (no 0.0 defaults anywhere).
+
+Headline `overall_applicable` is NOT computed here — it lives exclusively in
+leaderboard.py to keep one source of truth for headline policy.
 
 Standalone test:
   python evaluator.py                       — eval + judge over SAMPLE_PROMPTS × EVALUATOR_MODELS
@@ -23,8 +26,6 @@ import argparse
 import json
 import sys
 
-import numpy as np
-
 from config.llm import (
     EVALUATOR_MODELS,
     EVALUATOR_SYSTEM_PROMPT,
@@ -35,7 +36,8 @@ from config.llm import (
     call_model,
 )
 
-EXPECTED_SCORE_KEYS = {"factuality", "reasoning", "instruction_following", "format_compliance"}
+# Single source of truth pair: this set mirrors leaderboard.DIMENSIONS. Keep in sync.
+EXPECTED_SCORE_KEYS = {"factuality", "reasoning", "instruction_following", "format_compliance", "verbosity"}
 
 
 def run_model(prompt_text: str, model: str) -> CallResult:
@@ -56,7 +58,7 @@ def score_response(prompt_obj: dict, response_text: str) -> dict:
             "reasoning":             float | nan,
             "instruction_following": float | nan,   # NaN on empty/unparseable judge
             "format_compliance":     float | nan,   # NaN on empty/unparseable judge
-            "overall_applicable":    float | nan,   # nanmean of present dims
+            "verbosity":             float | nan,   # NaN on empty/unparseable judge
             "judge_latency_ms":      int,
             "judge_tokens_used":     int,
             "judge_model":           str,
@@ -65,6 +67,8 @@ def score_response(prompt_obj: dict, response_text: str) -> dict:
             "retry_count":           int,
             "parse_error":           str | None,
         }
+
+    Note: headline overall_applicable is computed in leaderboard.py, not here.
     """
     response_truncated = response_text[:1500]
     prompt_text = f"Prompt: {prompt_obj['prompt_text'][:500]}\n\nResponse: {response_truncated}"
@@ -80,7 +84,7 @@ def score_response(prompt_obj: dict, response_text: str) -> dict:
         "reasoning":             float("nan"),
         "instruction_following": float("nan"),
         "format_compliance":     float("nan"),
-        "overall_applicable":    float("nan"),
+        "verbosity":             float("nan"),
         "judge_latency_ms":      result.latency_ms,
         "judge_tokens_used":     result.tokens_used,
         "judge_model":           result.model_used,
@@ -127,13 +131,6 @@ def score_response(prompt_obj: dict, response_text: str) -> dict:
             missing.append(key)
     if missing:
         scores["parse_error"] = f"Missing keys: {sorted(missing)}"
-
-    scores["overall_applicable"] = float(np.nanmean([
-        scores["factuality"],
-        scores["reasoning"],
-        scores["instruction_following"],
-        scores["format_compliance"],
-    ]))
 
     return scores
 

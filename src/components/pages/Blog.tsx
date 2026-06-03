@@ -505,11 +505,11 @@ export function Blog() {
           <motion.div custom={1} variants={fadeUp} initial="hidden" animate="show">
             <SectionLabel>01, Evaluation Dimensions</SectionLabel>
             <h3 className="font-display text-[#F5F0E8] text-[20px] font-bold tracking-tight mb-5">
-              Four Dimensions, Zero Ambiguity
+              Five Dimensions, Zero Ambiguity
             </h3>
             <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5 mb-6">
               <p className="text-[#C8C2B8] text-[13px] leading-relaxed">
-                Every response is scored on exactly four continuous dimensions between 0 and 1. Each dimension has a precise definition, a deterministic or judge-based scoring rule, and a prompt that forces the judge to reason explicitly before returning a float.
+                Every response is scored on exactly five continuous dimensions between 0 and 1. Each dimension has a precise definition and an explicit slot in the judge's JSON schema; the Nemotron judge fills all five in a single call. Factuality, reasoning, instruction-following, and verbosity make up the headline mean; format compliance is reported alongside but excluded from the headline, because it measures structural pickiness rather than capability.
               </p>
             </div>
 
@@ -536,8 +536,14 @@ export function Blog() {
                 {
                   name: "Format Compliance",
                   tag: "format_compliance",
-                  def: "Measures structural exactness against the requested output format. Penalises hedging, padding, and unnecessary preamble. Rewards precision.",
-                  rule: "Deterministic parser first (JSON.parse, regex, code-fence detection). If unambiguous → score is final, Nemotron not called. If partial/ambiguous → Nemotron adjudicates edge cases.",
+                  def: "Measures structural exactness against the requested output format. Scored on every prompt and reported per-dimension, but excluded from the headline overall_applicable mean — format pickiness is a separate axis from capability.",
+                  rule: 'Nemotron: "Rate structural fit to the requested format. 1.00 = perfect structure. 0.85 = correct structure, minor deviation. 0.60 = right format, wrong details. 0.30 = wrong format. 0.00 = no structure attempted." Returns float 0–1, scored in the same JSON call as the other four dimensions — there is no separate deterministic parser layer.',
+                },
+                {
+                  name: "Verbosity Discipline",
+                  tag: "verbosity",
+                  def: "Scores conciseness relative to task. Penalises padding, hedging, and unnecessary preamble; rewards precision within minimal tokens. Part of the headline mean.",
+                  rule: 'Nemotron: "1.00 = optimal length, no padding. 0.85 = slightly verbose. 0.60 = noticeable padding or hedging. 0.30 = significant bloat. 0.00 = severe rambling." Returns float 0–1.',
                 },
               ].map((dim, i) => (
                 <motion.div
@@ -575,11 +581,11 @@ export function Blog() {
           <motion.div custom={6} variants={fadeUp} initial="hidden" animate="show">
             <SectionLabel>02, Prompt Taxonomy</SectionLabel>
             <h3 className="font-display text-[#F5F0E8] text-[20px] font-bold tracking-tight mb-5">
-              Five Categories, 40 Prompts Each
+              Six Categories, 100 Prompts Each, Tiered by Difficulty
             </h3>
             <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5 mb-6">
               <p className="text-[#C8C2B8] text-[13px] leading-relaxed">
-                200 prompts total across 3 evaluated models yield 600 responses. Category selection was designed to stress different capability surfaces simultaneously, including adversarial cases where the correct behavior is restraint.
+                600 prompts total across 3 evaluated models yield 1,800 responses. Each category spans four difficulty tiers (easy 15, medium 25, hard 35, expert 25), so the expert-tier slice surfaces model separation that the headline mean smooths over. Categories were chosen to stress distinct capability surfaces — including safety calibration (over- vs under-refusal) and hallucination under uncertainty (false premises, fabrication bait), where the correct behaviour is restraint.
               </p>
             </div>
 
@@ -666,7 +672,7 @@ Do not add disclaimers, caveats, or meta-commentary about your response.`}
               preview={`Score this prompt-response pair. Use full 0.00-1.00 range — most responses
 score 0.40-0.85, not 1.00.
 
-factuality · reasoning · instruction_following · format_compliance
+factuality · reasoning · instruction_following · format_compliance · verbosity
 each scored 0.00–1.00 (or null when inapplicable).`}
               full={`Score this prompt-response pair. Use full 0.00-1.00 range — most responses
 score 0.40-0.85, not 1.00.
@@ -686,17 +692,23 @@ format_compliance: structural exactness. 1.00=perfect structure.
 0.85=correct structure, minor deviation. 0.60=right format, wrong details.
 0.30=wrong format. 0.00=no structure attempted.
 
-Penalize: hedging, padding, unnecessary preamble, repetition.
-Reward: precision, completeness within minimal tokens.
+verbosity: conciseness relative to task. 1.00=optimal length, no padding.
+0.85=slightly verbose. 0.60=noticeable padding or hedging. 0.30=significant bloat.
+0.00=severe rambling. Penalize unnecessary preamble, repetition, hedging.
+Reward precision within minimal tokens.
+
+When the prompt contains a false premise or unanswerable request, correctly
+identifying this and declining to fabricate is the high-scoring response;
+do not penalize absence of factual claims in that case.
 
 Return JSON only:
-{"factuality":0.00,"reasoning":0.00,"instruction_following":0.00,"format_compliance":0.00}
-null example: {"factuality":null,"reasoning":null,"instruction_following":0.85,"format_compliance":0.92}`}
+{"factuality":0.00,"reasoning":0.00,"instruction_following":0.00,"format_compliance":0.00,"verbosity":0.00}
+null example: {"factuality":null,"reasoning":null,"instruction_following":0.85,"format_compliance":0.92,"verbosity":0.78}`}
             />
 
             <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5">
               <p className="text-[#C8C2B8] text-[12px] leading-relaxed mb-4">
-                Nemotron scores all four dimensions in a single call, returning one JSON object per evaluator response. Dimensions the prompt does not exercise are returned as <code className="font-mono text-[#E8DFD2]">null</code> (no factual claims → null factuality; no inferential steps → null reasoning) and stored as NaN, so they are excluded from that row's <code className="font-mono text-[#E8DFD2]">overall_applicable</code> mean rather than penalised. Judge latency and token count are logged per call.
+                Nemotron scores all five dimensions in a single call, returning one JSON object per evaluator response. Dimensions the prompt does not exercise are returned as <code className="font-mono text-[#E8DFD2]">null</code> (no factual claims → null factuality; no inferential steps → null reasoning) and stored as NaN, so they are excluded from that row's headline mean rather than penalised. <code className="font-mono text-[#E8DFD2]">overall_applicable</code> averages four of the five — factuality, reasoning, instruction-following, and verbosity — while <code className="font-mono text-[#E8DFD2]">format_compliance</code> is reported alongside as a separate column. Judge latency and token count are logged per call.
               </p>
               <p className="text-[#C8C2B8] text-[12px] leading-relaxed">
                 Evaluator responses are truncated to 1,500 characters (cap at ~375 tokens) before being sent to the judge. This reduces judge input size by 30 to 40 percent, keeping calls within free-tier upstream capacity limits and preventing upstream throttling. The truncation threshold was chosen to preserve the substantive content of any response while eliminating padding and repetition.
@@ -803,7 +815,7 @@ borrow: any leaf may consume idle siblings' tokens up to root`}
               </div>
               <p className="text-[#C8C2B8] text-[12px] leading-relaxed mt-4 pt-4 border-t border-white/[0.06]">
                 <span className="text-[#F5F0E8] text-[11px] uppercase tracking-wider font-medium">Empty-judge handling  </span>
-                When the judge returns an unparseable response, all four dimensions become NaN and <span className="font-mono">judge_empty=True</span> is recorded on the row. Previously, two of the four defaulted to 0.0 — a silent downward bias in the leaderboard. Calibration probes (HELM-style anchor responses) are noted as future work.
+                When the judge returns an unparseable response, all five dimensions become NaN and <span className="font-mono">judge_empty=True</span> is recorded on the row. Previously, two of the four defaulted to 0.0 — a silent downward bias in the leaderboard. Calibration probes (HELM-style anchor responses) are noted as future work.
               </p>
             </div>
           </motion.div>
@@ -827,15 +839,15 @@ borrow: any leaf may consume idle siblings' tokens up to root`}
                 },
                 {
                   n: "02",
-                  title: "Deterministic Where Possible",
+                  title: "Pinned Where Possible",
                   blogPost: "LLM judges every cell",
-                  benchmark: "Format compliance runs regex and parser checks first; the LLM judge sees only genuinely ambiguous edge cases. Reproducible without re-running the judge.",
+                  benchmark: "The prompt suite, judge model id, and system prompt are version-pinned; the judge returns a fixed 5-key JSON schema. Reproducibility comes from pinning the inputs, not from a separate deterministic parser layer.",
                 },
                 {
                   n: "03",
                   title: "Full Prompt Suite Published",
                   blogPost: "Cherry-picked screenshots",
-                  benchmark: "All 200 prompts, expected output types, and ground truth labels ship with the repo. Swap the judge, add dimensions, rerun — no reverse-engineering required.",
+                  benchmark: "All 600 prompts, expected output types, difficulty tags, and ground truth labels ship with the repo. Swap the judge, add dimensions, rerun — no reverse-engineering required.",
                 },
               ].map((item) => (
                 <div

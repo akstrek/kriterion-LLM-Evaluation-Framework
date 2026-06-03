@@ -10,7 +10,8 @@ const CATEGORIES: { key: keyof ModelPerformance; label: string }[] = [
   { key: "catMultiStepReasoning", label: "Multi-step reasoning" },
   { key: "catInstructionFollowing", label: "Instruction following" },
   { key: "catCodeGeneration", label: "Code generation" },
-  { key: "catAdversarialEdgeCases", label: "Adversarial / edge cases" },
+  { key: "catSafetyCalibration", label: "Safety calibration" },
+  { key: "catHallucinationUnderUncertainty", label: "Hallucination resistance" },
 ];
 
 function CategoryBars({ row, color }: { row: ModelPerformance; color: string }) {
@@ -64,6 +65,7 @@ export function LeaderboardTable() {
   const bestReasoning = Math.max(...data.map((d) => d.reasoning));
   const bestInstruction = Math.max(...data.map((d) => d.instructionFollowing));
   const bestFormat = Math.max(...data.map((d) => d.formatCompliance));
+  const bestVerbosity = Math.max(...data.map((d) => d.verbosity));
   const bestLatency = Math.min(...data.map((d) => d.latencyP50Ms));
 
   const toggle = (model: string) => {
@@ -92,6 +94,7 @@ export function LeaderboardTable() {
             <th className="pb-4 font-semibold text-right hidden sm:table-cell">Reasoning</th>
             <th className="pb-4 font-semibold text-right hidden sm:table-cell">Instruct</th>
             <th className="pb-4 font-semibold text-right hidden sm:table-cell">Format</th>
+            <th className="pb-4 font-semibold text-right hidden sm:table-cell">Verbosity</th>
             <th className="pb-4 font-semibold text-right pl-4 hidden md:table-cell">Latency P50</th>
             <th className="pb-4 font-semibold text-right hidden md:table-cell">Prompts</th>
             <th className="pb-4 font-semibold text-right hidden md:table-cell">Fallbacks</th>
@@ -138,6 +141,11 @@ export function LeaderboardTable() {
                       {fmt(row.formatCompliance)}
                     </span>
                   </td>
+                  <td className="py-4 px-4 text-right hidden sm:table-cell">
+                    <span className={row.verbosity === bestVerbosity ? "border-b border-[#F5F0E8] text-[#F5F0E8]" : ""}>
+                      {fmt(row.verbosity)}
+                    </span>
+                  </td>
                   <td className="py-4 pr-4 pl-4 text-right font-mono hidden md:table-cell">
                     <span className={row.latencyP50Ms === bestLatency ? "border-b border-[#F5F0E8] text-[#F5F0E8]" : ""}>
                       {Math.round(row.latencyP50Ms)}ms
@@ -148,7 +156,7 @@ export function LeaderboardTable() {
                 </tr>
                 {isOpen && (
                   <tr className="bg-white/[0.02]">
-                    <td colSpan={11} className="py-5 px-4">
+                    <td colSpan={12} className="py-5 px-4">
                       <div className="grid grid-cols-1 md:grid-cols-[1fr_2fr] gap-6">
                         <div className="space-y-2">
                           <div className="text-[10px] uppercase tracking-[0.12em] text-[#F5F0E8]">Strict overall</div>
@@ -181,7 +189,7 @@ export function LeaderboardTable() {
           Latency p95 excluded — on free-tier OpenRouter, tail latency reflects provider queue depth, not model inference speed.
         </p>
         <p className="text-[11px] text-[#C8C2B8]/65 leading-relaxed">
-          Overall = mean of the four dimension scores (factuality, reasoning, instruction following, format compliance), each averaged across all applicable prompts and rescaled to 0–100. The 95% CI is a bootstrap over per-prompt scores.
+          Overall = mean of the four headline dimensions (factuality, reasoning, instruction following, verbosity), each averaged across all applicable prompts and rescaled to 0–100. Format compliance is scored on every prompt and reported here, but excluded from the headline — it measures structural pickiness, not capability. The 95% CI is a bootstrap over per-prompt scores.
         </p>
       </div>
     </div>

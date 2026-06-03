@@ -141,16 +141,32 @@ def next_utc_reset(now: datetime.datetime | None = None) -> datetime.datetime:
 
 def sleep_until_reset(stop_event: threading.Event,
                       poll_secs: float = 300.0,
-                      reset_at: datetime.datetime | None = None) -> bool:
+                      reset_at: datetime.datetime | None = None,
+                      on_tick: Callable[[datetime.datetime, float], None] | None = None) -> bool:
     """Sleep until reset_at (default next 00:01 UTC), polling every poll_secs
     so a Windows suspend/resume doesn't miss the wake. Returns True on natural
-    wake, False if stop_event tripped first."""
+    wake, False if stop_event tripped first.
+
+    on_tick(reset_at, remaining_secs) fires after each poll interval (not on
+    entry — the orchestrator prints its own entry banner). Exceptions inside
+    on_tick are swallowed so a display bug can't break the scheduler.
+    """
     target = reset_at or next_utc_reset()
     while not stop_event.is_set():
         remaining = (target - datetime.datetime.now(timezone.utc)).total_seconds()
         if remaining <= 0:
             return True
         _interruptible_sleep(min(poll_secs, max(remaining, 1.0)))
+        if stop_event.is_set():
+            return False
+        remaining_after = (target - datetime.datetime.now(timezone.utc)).total_seconds()
+        if remaining_after <= 0:
+            return True
+        if on_tick is not None:
+            try:
+                on_tick(target, remaining_after)
+            except Exception:
+                pass
     return False
 
 
@@ -176,6 +192,9 @@ class EvalOrchestrator:
         models: list[str],
         process_pair_fn: Callable[[dict, str], None],
         queue_maxsize: int = 50,
+        on_quota_enter: Callable[[datetime.datetime], None] | None = None,
+        on_quota_tick: Callable[[datetime.datetime, float], None] | None = None,
+        on_quota_resume: Callable[[], None] | None = None,
     ) -> None:
         self.models = models
         self.process = process_pair_fn
@@ -185,6 +204,10 @@ class EvalOrchestrator:
         self.state_lock = threading.Lock()
         self.stop_event = threading.Event()
         self.quota_event = threading.Event()
+        # Optional display hooks — pure stdout, no effect on scheduling timing.
+        self.on_quota_enter = on_quota_enter
+        self.on_quota_tick = on_quota_tick
+        self.on_quota_resume = on_quota_resume
 
     def enqueue_all(self, pairs: Iterable[tuple[dict, str]]) -> None:
         for prompt_obj, model in pairs:
@@ -208,13 +231,28 @@ class EvalOrchestrator:
                 # Workers finish in-flight while we wait for reset.
                 self.queue.join()
                 self.stats.quota_sleeps += 1
-                woke = sleep_until_reset(self.stop_event)
+                # Single source of truth for the reset target — passed to both
+                # the entry banner and sleep_until_reset.
+                target = next_utc_reset()
+                if self.on_quota_enter is not None:
+                    try:
+                        self.on_quota_enter(target)
+                    except Exception:
+                        pass
+                woke = sleep_until_reset(self.stop_event, reset_at=target,
+                                         on_tick=self.on_quota_tick)
                 if not woke:
                     return
                 _HTB.reset_daily()
                 self.quota_event.clear()
-                print("[scheduler] daily HTB budget reset — resuming",
-                      flush=True)
+                if self.on_quota_resume is not None:
+                    try:
+                        self.on_quota_resume()
+                    except Exception:
+                        pass
+                else:
+                    print("[scheduler] daily HTB budget reset — resuming",
+                          flush=True)
                 continue
 
             if not self.drr.has_work():

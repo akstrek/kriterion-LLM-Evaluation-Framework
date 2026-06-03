@@ -1,75 +1,84 @@
 import Papa from 'papaparse';
-import { ModelPerformance } from '../types';
+import { ModelPerformance, ModelDifficultyRow } from '../types';
 
+// FALLBACK_DATA is only used when the runtime CSV is missing or malformed —
+// e.g. local dev before the first eval run. Values are placeholders, not
+// claims about model performance under the new 5-dim rubric.
 const FALLBACK_DATA: ModelPerformance[] = [
   {
     rank: 1,
     model: "moonshotai/kimi-k2.6:free",
-    overallScore: 0.9333,
-    overallStrict: 0.9244,
-    ciLow: 0.9141,
-    ciHigh: 0.9518,
-    factuality: 0.969,
-    reasoning: 0.8559,
-    instructionFollowing: 0.8925,
-    formatCompliance: 0.98,
+    overallScore: 0.74,
+    overallStrict: 0.73,
+    ciLow: 0.72,
+    ciHigh: 0.76,
+    factuality: 0.78,
+    reasoning: 0.71,
+    instructionFollowing: 0.75,
+    formatCompliance: 0.80,
+    verbosity: 0.72,
     costPerPrompt: 0,
-    latencyP50Ms: 14066,
-    latencyP95Ms: 137704,
-    nPrompts: 200,
+    latencyP50Ms: 14000,
+    latencyP95Ms: 138000,
+    nPrompts: 600,
     nJudgeEmpty: 1,
     nFallback: 22,
-    catFactualRecall: 0.9991,
-    catMultiStepReasoning: 0.9683,
-    catInstructionFollowing: 0.9302,
-    catCodeGeneration: 0.9806,
-    catAdversarialEdgeCases: 0.7853,
+    catFactualRecall: 0.80,
+    catMultiStepReasoning: 0.74,
+    catInstructionFollowing: 0.76,
+    catCodeGeneration: 0.71,
+    catSafetyCalibration: 0.72,
+    catHallucinationUnderUncertainty: 0.68,
   },
   {
     rank: 2,
     model: "google/gemma-4-31b-it:free",
-    overallScore: 0.9137,
-    overallStrict: 0.9074,
-    ciLow: 0.8909,
-    ciHigh: 0.9342,
-    factuality: 0.9506,
-    reasoning: 0.8448,
-    instructionFollowing: 0.8761,
-    formatCompliance: 0.958,
+    overallScore: 0.72,
+    overallStrict: 0.71,
+    ciLow: 0.70,
+    ciHigh: 0.74,
+    factuality: 0.76,
+    reasoning: 0.70,
+    instructionFollowing: 0.73,
+    formatCompliance: 0.77,
+    verbosity: 0.70,
     costPerPrompt: 0,
-    latencyP50Ms: 4522,
-    latencyP95Ms: 15353,
-    nPrompts: 200,
+    latencyP50Ms: 4500,
+    latencyP95Ms: 15000,
+    nPrompts: 600,
     nJudgeEmpty: 0,
     nFallback: 86,
-    catFactualRecall: 1.0,
-    catMultiStepReasoning: 0.9542,
-    catInstructionFollowing: 0.9209,
-    catCodeGeneration: 0.9655,
-    catAdversarialEdgeCases: 0.728,
+    catFactualRecall: 0.78,
+    catMultiStepReasoning: 0.72,
+    catInstructionFollowing: 0.74,
+    catCodeGeneration: 0.69,
+    catSafetyCalibration: 0.70,
+    catHallucinationUnderUncertainty: 0.66,
   },
   {
     rank: 3,
     model: "openai/gpt-oss-120b:free",
-    overallScore: 0.9082,
-    overallStrict: 0.8989,
-    ciLow: 0.8863,
-    ciHigh: 0.931,
-    factuality: 0.9541,
-    reasoning: 0.8204,
-    instructionFollowing: 0.8579,
-    formatCompliance: 0.9631,
+    overallScore: 0.71,
+    overallStrict: 0.70,
+    ciLow: 0.69,
+    ciHigh: 0.73,
+    factuality: 0.75,
+    reasoning: 0.69,
+    instructionFollowing: 0.72,
+    formatCompliance: 0.76,
+    verbosity: 0.68,
     costPerPrompt: 0,
-    latencyP50Ms: 8292,
-    latencyP95Ms: 32059,
-    nPrompts: 199,
+    latencyP50Ms: 8300,
+    latencyP95Ms: 32000,
+    nPrompts: 600,
     nJudgeEmpty: 1,
     nFallback: 0,
-    catFactualRecall: 1.0,
-    catMultiStepReasoning: 0.9634,
-    catInstructionFollowing: 0.9456,
-    catCodeGeneration: 0.9242,
-    catAdversarialEdgeCases: 0.7051,
+    catFactualRecall: 0.77,
+    catMultiStepReasoning: 0.74,
+    catInstructionFollowing: 0.73,
+    catCodeGeneration: 0.70,
+    catSafetyCalibration: 0.69,
+    catHallucinationUnderUncertainty: 0.64,
   },
 ];
 
@@ -93,6 +102,7 @@ function mapRow(row: any): ModelPerformance | null {
     reasoning: num(row.avg_reasoning),
     instructionFollowing: num(row.avg_instruction_following),
     formatCompliance: num(row.avg_format_compliance),
+    verbosity: num(row.avg_verbosity),
     costPerPrompt: num(row.avg_cost_per_prompt_usd),
     latencyP50Ms: num(row.latency_p50_ms),
     latencyP95Ms: num(row.latency_p95_ms),
@@ -103,7 +113,27 @@ function mapRow(row: any): ModelPerformance | null {
     catMultiStepReasoning: num(row.cat_multi_step_reasoning),
     catInstructionFollowing: num(row.cat_instruction_following),
     catCodeGeneration: num(row.cat_code_generation),
-    catAdversarialEdgeCases: num(row.cat_adversarial_edge_cases),
+    catSafetyCalibration: num(row.cat_safety_calibration),
+    catHallucinationUnderUncertainty: num(row.cat_hallucination_under_uncertainty),
+  };
+}
+
+function mapDifficultyRow(row: any): ModelDifficultyRow | null {
+  if (!row || !row.model || !row.difficulty) return null;
+  const overall = Number(row.overall_applicable);
+  if (!Number.isFinite(overall)) return null;
+  const tier = String(row.difficulty);
+  if (!["easy", "medium", "hard", "expert"].includes(tier)) return null;
+  return {
+    model: String(row.model),
+    difficulty: tier as ModelDifficultyRow["difficulty"],
+    overallScore: overall,
+    factuality: num(row.avg_factuality),
+    reasoning: num(row.avg_reasoning),
+    instructionFollowing: num(row.avg_instruction_following),
+    formatCompliance: num(row.avg_format_compliance),
+    verbosity: num(row.avg_verbosity),
+    nPrompts: num(row.n_prompts),
   };
 }
 
@@ -138,10 +168,38 @@ export async function loadLeaderboard(): Promise<ModelPerformance[]> {
   }
 }
 
+export async function loadLeaderboardByDifficulty(): Promise<ModelDifficultyRow[]> {
+  try {
+    const res = await fetch('/data/leaderboard_by_difficulty.csv');
+    if (!res.ok) return [];
+
+    const contentType = res.headers.get('content-type');
+    if (contentType && contentType.includes('text/html')) return [];
+
+    const text = await res.text();
+    return new Promise((resolve) => {
+      Papa.parse(text, {
+        header: true,
+        dynamicTyping: true,
+        skipEmptyLines: true,
+        complete: (results) => {
+          const mapped = (results.data as any[])
+            .map(mapDifficultyRow)
+            .filter((r): r is ModelDifficultyRow => r !== null);
+          resolve(mapped);
+        },
+        error: () => resolve([]),
+      });
+    });
+  } catch {
+    return [];
+  }
+}
+
 export async function loadEvalResults() {
   return loadLeaderboard();
 }
 
 export async function loadDimensions() {
-  return ["Factuality", "Reasoning", "Instruction Following", "Format Compliance"];
+  return ["Factuality", "Reasoning", "Instruction Following", "Format Compliance", "Verbosity"];
 }

@@ -1,33 +1,67 @@
 """
 leaderboard.py
-Aggregates data/eval_results.csv → data/leaderboard.csv.
+Aggregates data/eval_results.csv → data/leaderboard.csv
+                                  + data/leaderboard_by_difficulty.csv
 
-Two overall scores per model:
-  overall_applicable  — mean of present (non-NaN) per-row dim scores
-  overall_strict      — per-row NaN dims imputed with the model's own dim mean,
-                        then averaged. Penalises models the judge couldn't
-                        score on a dim (no free pass for skipping).
+Single source of truth for the headline policy:
+  HEADLINE_DIMS = factuality + reasoning + instruction_following + verbosity
+  format_compliance is still scored on every prompt and aggregated as
+  avg_format_compliance, but it is NOT part of overall_applicable —
+  format pickiness is a separate axis, reported but not averaged in.
+
+  overall_applicable  — row-wise nanmean over HEADLINE_DIMS, then column mean
+  overall_strict      — per-row NaN headline dims imputed with the model's
+                        own dim mean, then averaged. No free pass for dims
+                        the judge couldn't score.
 
 Plus bootstrap 95% CI on overall_applicable (1000× resample, pure numpy).
+
+Stratified output:
+  data/leaderboard_by_difficulty.csv  — per (model × difficulty) row with
+  overall_applicable + per-dim means + n_prompts. This is the view that
+  separates models at the expert tier; the headline mixes all tiers.
 """
 import json
 import os
+import shutil
 import sys
 
 import numpy as np
 import pandas as pd
 
-EVAL_RESULTS_PATH = os.path.join("data", "eval_results.csv")
-LEADERBOARD_PATH  = os.path.join("data", "leaderboard.csv")
+EVAL_RESULTS_PATH       = os.path.join("data", "eval_results.csv")
+LEADERBOARD_PATH        = os.path.join("data", "leaderboard.csv")
+LEADERBOARD_BY_DIFF_PATH = os.path.join("data", "leaderboard_by_difficulty.csv")
+PUBLIC_DATA_DIR         = os.path.join("public", "data")
 
-DIMENSIONS = ["factuality", "reasoning", "instruction_following", "format_compliance"]
+# Single source of truth pair: this list mirrors evaluator.EXPECTED_SCORE_KEYS.
+# Keep in sync.
+DIMENSIONS = [
+    "factuality",
+    "reasoning",
+    "instruction_following",
+    "format_compliance",
+    "verbosity",
+]
+
+# Headline policy: format_compliance is reported but NOT in the headline mean.
+HEADLINE_DIMS = [
+    "factuality",
+    "reasoning",
+    "instruction_following",
+    "verbosity",
+]
+
 CATEGORIES = [
     "factual_recall",
     "multi_step_reasoning",
     "instruction_following",
     "code_generation",
-    "adversarial_edge_cases",
+    "safety_calibration",
+    "hallucination_under_uncertainty",
 ]
+
+DIFFICULTY_TIERS = ["easy", "medium", "hard", "expert"]
 
 BOOTSTRAP_ITERS = 1000
 BOOTSTRAP_SEED  = 42
@@ -44,19 +78,31 @@ def load_results() -> pd.DataFrame:
     return df
 
 
-def load_prompts_category_map() -> dict[str, str]:
+def load_prompts_metadata() -> tuple[dict[str, str], dict[str, str]]:
+    """Returns (category_map, difficulty_map) keyed by prompt id.
+
+    Falls back to empty dicts if prompt_suite.json is missing; downstream
+    aggregations skip stratified outputs when difficulty is unknown.
+    """
     path = os.path.join("prompts", "prompt_suite.json")
     if not os.path.exists(path):
-        return {}
+        return {}, {}
     with open(path, encoding="utf-8") as f:
         prompts = json.load(f)
-    return {p["id"]: p["category"] for p in prompts}
+    cat_map = {p["id"]: p["category"] for p in prompts}
+    diff_map = {p["id"]: p.get("difficulty", "") for p in prompts}
+    return cat_map, diff_map
+
+
+def _row_headline_mean(row: pd.Series) -> float:
+    """Row-wise nanmean over the 4 headline dims."""
+    return float(np.nanmean([row[d] for d in HEADLINE_DIMS]))
 
 
 def compute_overall_strict_row(row: pd.Series, model_dim_means: dict[str, float]) -> float:
-    """Per-row strict overall: NaN dims imputed with the model's own dim mean."""
+    """Per-row strict overall: NaN headline dims imputed with the model's own dim mean."""
     vals = []
-    for dim in DIMENSIONS:
+    for dim in HEADLINE_DIMS:
         v = row[dim]
         if pd.isna(v):
             v = model_dim_means.get(dim, np.nan)
@@ -80,37 +126,39 @@ def bootstrap_ci(values: np.ndarray, iters: int = BOOTSTRAP_ITERS,
 
 
 def compute_leaderboard(df: pd.DataFrame) -> pd.DataFrame:
-    category_map = load_prompts_category_map()
-    if category_map:
+    cat_map, diff_map = load_prompts_metadata()
+    if cat_map:
         df = df.copy()
-        df["category"] = df["prompt_id"].map(category_map)
+        df["category"] = df["prompt_id"].map(cat_map)
+    if diff_map and "difficulty" not in df.columns:
+        df["difficulty"] = df["prompt_id"].map(diff_map)
+
+    # Compute per-row headline mean once; reused for cat_* breakdown.
+    applicable_all = df[HEADLINE_DIMS].apply(_row_headline_mean, axis=1)
+    df = df.assign(_applicable=applicable_all)
 
     rows = []
     for model, group in df.groupby("model"):
         row: dict = {"model": model}
-        # Per-dimension averages (NaN-aware).
+
+        # Per-dimension averages — all 5 dims reported (incl. format_compliance).
         model_dim_means: dict[str, float] = {}
         for dim in DIMENSIONS:
             mean = group[dim].mean(skipna=True)
             model_dim_means[dim] = mean
             row[f"avg_{dim}"] = round(mean, 4) if not pd.isna(mean) else None
 
-        # overall_applicable: row-wise nanmean of present dims, then column mean.
-        if "overall_applicable" in group.columns:
-            applicable_per_row = group["overall_applicable"].to_numpy(dtype=float)
-        else:
-            applicable_per_row = group[DIMENSIONS].apply(
-                lambda r: np.nanmean(r.values), axis=1
-            ).to_numpy(dtype=float)
+        # overall_applicable: nanmean of the row-wise headline means.
+        applicable_per_row = group["_applicable"].to_numpy(dtype=float)
         row["overall_applicable"] = round(float(np.nanmean(applicable_per_row)), 4)
 
-        # overall_strict: impute NaN dims with model's own mean per row.
+        # overall_strict: impute NaN headline dims with model's own mean per row.
         strict_per_row = group.apply(
             lambda r: compute_overall_strict_row(r, model_dim_means), axis=1
         ).to_numpy(dtype=float)
         row["overall_strict"] = round(float(np.nanmean(strict_per_row)), 4)
 
-        # Bootstrap CI on overall_applicable (pure numpy).
+        # Bootstrap CI on overall_applicable.
         lo, hi = bootstrap_ci(applicable_per_row)
         row["ci_low"]  = round(lo, 4) if not np.isnan(lo) else None
         row["ci_high"] = round(hi, 4) if not np.isnan(hi) else None
@@ -130,12 +178,12 @@ def compute_leaderboard(df: pd.DataFrame) -> pd.DataFrame:
             if total_cost > 0 else "N/A (free tier)"
         )
 
-        # Per-category breakdown — uses the new overall_applicable column.
-        if "category" in df.columns and "overall_applicable" in group.columns:
+        # Per-category breakdown — row-wise headline mean averaged per category.
+        if "category" in df.columns:
             for cat in CATEGORIES:
                 cat_group = group[group["category"] == cat]
                 row[f"cat_{cat}"] = (
-                    round(cat_group["overall_applicable"].mean(), 4)
+                    round(float(np.nanmean(cat_group["_applicable"])), 4)
                     if len(cat_group) > 0 else None
                 )
         else:
@@ -157,31 +205,86 @@ def compute_leaderboard(df: pd.DataFrame) -> pd.DataFrame:
     return lb
 
 
+def compute_leaderboard_by_difficulty(df: pd.DataFrame) -> pd.DataFrame:
+    """One row per (model × difficulty). Same headline policy as compute_leaderboard,
+    but stratified. Empty when no `difficulty` column is present."""
+    if "difficulty" not in df.columns:
+        return pd.DataFrame()
+    if "_applicable" not in df.columns:
+        df = df.assign(_applicable=df[HEADLINE_DIMS].apply(_row_headline_mean, axis=1))
+
+    rows = []
+    for (model, difficulty), group in df.groupby(["model", "difficulty"], dropna=False):
+        if not difficulty or (isinstance(difficulty, float) and np.isnan(difficulty)):
+            continue  # rows without a difficulty tag (legacy data) are skipped
+        applicable_per_row = group["_applicable"].to_numpy(dtype=float)
+        row: dict = {
+            "model": model,
+            "difficulty": difficulty,
+            "overall_applicable": round(float(np.nanmean(applicable_per_row)), 4),
+            "n_prompts": len(group),
+        }
+        for dim in DIMENSIONS:
+            mean = group[dim].mean(skipna=True)
+            row[f"avg_{dim}"] = round(mean, 4) if not pd.isna(mean) else None
+        rows.append(row)
+
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return out
+    # Order by model name then by difficulty tier (canonical easy → expert).
+    tier_order = {t: i for i, t in enumerate(DIFFICULTY_TIERS)}
+    out["_tier_ord"] = out["difficulty"].map(lambda t: tier_order.get(t, 99))
+    out = out.sort_values(["model", "_tier_ord"]).drop(columns=["_tier_ord"]).reset_index(drop=True)
+    return out
+
+
+def _publish_to_public(paths: list[str]) -> None:
+    """Copy CSVs into public/data/ so the static frontend can fetch them.
+    No-op if the destination directory doesn't exist (e.g. backend-only checkout)."""
+    if not os.path.isdir(PUBLIC_DATA_DIR):
+        return
+    for src in paths:
+        if os.path.exists(src):
+            dst = os.path.join(PUBLIC_DATA_DIR, os.path.basename(src))
+            shutil.copyfile(src, dst)
+
+
 def print_leaderboard(lb: pd.DataFrame) -> None:
-    print("\n" + "=" * 100)
+    print("\n" + "=" * 110)
     print("KRITERION LEADERBOARD")
-    print("=" * 100)
+    print("=" * 110)
     col_order = [
         "rank", "model", "overall_applicable", "overall_strict", "ci_low", "ci_high",
         "avg_factuality", "avg_reasoning",
-        "avg_instruction_following", "avg_format_compliance",
+        "avg_instruction_following", "avg_format_compliance", "avg_verbosity",
         "latency_p50_ms", "latency_p95_ms",
         "avg_tokens_used", "n_judge_empty", "n_fallback",
     ]
     col_order = [c for c in col_order if c in lb.columns]
-    with pd.option_context("display.max_columns", None, "display.width", 220,
+    with pd.option_context("display.max_columns", None, "display.width", 240,
                            "display.float_format", "{:.4f}".format):
         print(lb[col_order].to_string(index=False))
-    print("=" * 100)
+    print("=" * 110)
 
 
 def main() -> None:
     df = load_results()
     print(f"Loaded {len(df)} rows from {EVAL_RESULTS_PATH}")
+
     lb = compute_leaderboard(df)
     os.makedirs("data", exist_ok=True)
     lb.to_csv(LEADERBOARD_PATH, index=False)
     print(f"\nLeaderboard saved: {LEADERBOARD_PATH}")
+
+    lb_diff = compute_leaderboard_by_difficulty(df)
+    if not lb_diff.empty:
+        lb_diff.to_csv(LEADERBOARD_BY_DIFF_PATH, index=False)
+        print(f"By-difficulty saved: {LEADERBOARD_BY_DIFF_PATH}  ({len(lb_diff)} rows)")
+    else:
+        print("By-difficulty: skipped (no difficulty tags in input).")
+
+    _publish_to_public([LEADERBOARD_PATH, LEADERBOARD_BY_DIFF_PATH])
     print_leaderboard(lb)
 
 

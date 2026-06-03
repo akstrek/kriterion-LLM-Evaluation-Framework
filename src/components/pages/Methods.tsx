@@ -13,9 +13,10 @@ factuality: claim accuracy. 1.00=every claim verifiable. 0.85=minor imprecision.
 reasoning: inferential validity AND depth. 1.00=correct + insightful. 0.85=correct but shallow. 0.60=mostly correct, one weak step. 0.30=flawed logic. 0.00=incoherent. null if no reasoning required.
 instruction_following: constraint satisfaction. Count explicit constraints (length, format, scope, exclusions). Score = constraints_met / constraints_total. Partial credit per constraint. Score implied intent if none explicit.
 format_compliance: structural exactness. 1.00=perfect structure. 0.85=correct structure, minor deviation. 0.60=right format, wrong details. 0.30=wrong format. 0.00=no structure attempted.
-Penalize: hedging, padding, unnecessary preamble, repetition. Reward: precision, completeness within minimal tokens.
-Return JSON only: {"factuality":0.00,"reasoning":0.00,"instruction_following":0.00,"format_compliance":0.00}
-null example: {"factuality":null,"reasoning":null,"instruction_following":0.85,"format_compliance":0.92}`;
+verbosity: conciseness relative to task. 1.00=optimal length, no padding. 0.85=slightly verbose. 0.60=noticeable padding or hedging. 0.30=significant bloat. 0.00=severe rambling. Penalize unnecessary preamble, repetition, hedging. Reward precision within minimal tokens.
+When the prompt contains a false premise or unanswerable request, correctly identifying this and declining to fabricate is the high-scoring response; do not penalize absence of factual claims in that case.
+Return JSON only: {"factuality":0.00,"reasoning":0.00,"instruction_following":0.00,"format_compliance":0.00,"verbosity":0.00}
+null example: {"factuality":null,"reasoning":null,"instruction_following":0.85,"format_compliance":0.92,"verbosity":0.78}`;
 
 const stripFree = (m: string) => m.replace(":free", "");
 const titleCase = (s: string) =>
@@ -137,7 +138,7 @@ export function Methods() {
                   <li className={bodyClass}>• Total prompts: {totalPrompts} × 3 evaluators = {totalPrompts * 3} pairs</li>
                   <li className={bodyClass}>• Total API calls: ~{(totalPrompts * 3 * 2).toLocaleString()} logical (eval + judge per pair)</li>
                   <li className={bodyClass}>• Daily budget: 950 calls/day (5% headroom under 1,000 RPD ceiling)</li>
-                  <li className={bodyClass}>• Estimated run: 2 calendar days</li>
+                  <li className={bodyClass}>• Estimated run: ~4 calendar days at 950 RPD</li>
                 </ul>
                 <p className={bodyClass}>
                   Deficit Round Robin ensures uniform completion counts across evaluator models. The runner
@@ -158,13 +159,16 @@ export function Methods() {
                     </p>
                   </div>
                   <div>
-                    <p className={labelClass}>Two Aggregations</p>
+                    <p className={labelClass}>Headline Policy</p>
                     <p className={bodyClass}>
-                      <span className="font-mono text-[#F5F0E8]">overall_applicable</span>: mean of scored
-                      dimensions only (NaN dimensions excluded).{" "}
-                      <span className="font-mono text-[#F5F0E8]">overall_strict</span>: NaN dimensions
-                      imputed with the model's own mean for that dimension, then averaged. Both are
-                      published. Neither has free parameters.
+                      <span className="font-mono text-[#F5F0E8]">overall_applicable</span>: mean of the four
+                      headline dimensions (factuality, reasoning, instruction following, verbosity), NaN
+                      dimensions excluded.{" "}
+                      <span className="font-mono text-[#F5F0E8]">overall_strict</span>: NaN headline
+                      dimensions imputed with the model's own mean, then averaged.{" "}
+                      <span className="font-mono text-[#F5F0E8]">format_compliance</span> is scored on every
+                      prompt and reported as a per-dimension column, but excluded from the headline —
+                      structural pickiness is a separate axis from capability.
                     </p>
                   </div>
                   <div>

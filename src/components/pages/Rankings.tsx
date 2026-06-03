@@ -4,6 +4,7 @@ import { BottomRight } from "../layout/BottomRight";
 import { ScrollableZone } from "../layout/ScrollableZone";
 import { LeaderboardTable } from "../charts/LeaderboardTable";
 import { PerformanceLatencyScatter } from "../charts/PerformanceLatencyScatter";
+import { DifficultyBreakdown } from "../charts/DifficultyBreakdown";
 import { ExpandableViz } from "../layout/ExpandableViz";
 
 export function Rankings() {
@@ -24,6 +25,9 @@ export function Rankings() {
           </ExpandableViz>
           <ExpandableViz>
             <PerformanceLatencyScatter />
+          </ExpandableViz>
+          <ExpandableViz>
+            <DifficultyBreakdown />
           </ExpandableViz>
         </div>
       </ScrollableZone>

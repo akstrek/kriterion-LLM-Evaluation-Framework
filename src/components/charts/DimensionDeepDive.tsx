@@ -40,7 +40,8 @@ export function DimensionDeepDive() {
     "Factuality": "factuality",
     "Reasoning": "reasoning",
     "Instruction Following": "instructionFollowing",
-    "Format Compliance": "formatCompliance"
+    "Format Compliance": "formatCompliance",
+    "Verbosity": "verbosity"
   };
 
   const currentKey = keyMap[selectedDimension];

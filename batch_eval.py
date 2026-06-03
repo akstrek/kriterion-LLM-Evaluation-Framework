@@ -38,6 +38,14 @@ from config.llm import (
 from config.scheduler import EvalOrchestrator
 from evaluator import run_model, score_response
 
+# Windows: default cp1252 stdout can't encode the box-drawing chars used in the
+# quota-exhaustion display blocks. PowerShell renders UTF-8 fine; this just
+# tells Python's stdout wrapper to use it.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+except Exception:
+    pass
+
 
 def _short_model(model_id: str) -> str:
     """Trim 'provider/foo-bar:free' → 'provider/foo-bar' for compact display."""
@@ -78,7 +86,7 @@ _SCHEMA = pa.schema([
     pa.field("reasoning",              pa.float64()),
     pa.field("instruction_following",  pa.float64()),
     pa.field("format_compliance",      pa.float64()),
-    pa.field("overall_applicable",     pa.float64()),
+    pa.field("verbosity",              pa.float64()),
     pa.field("judge_empty",            pa.bool_()),
     pa.field("fallback_triggered",     pa.bool_()),
     pa.field("retry_count",            pa.int32()),
@@ -87,6 +95,7 @@ _SCHEMA = pa.schema([
     pa.field("cost_usd",               pa.float64()),
     pa.field("provider",               pa.string()),
     pa.field("day_of_run",             pa.int32()),
+    pa.field("difficulty",             pa.string()),
     pa.field("judge_model",            pa.string()),
     pa.field("parse_error",            pa.string()),
     pa.field("judge_latency_ms",       pa.int64()),
@@ -103,11 +112,16 @@ def load_state() -> dict:
             "total_failures":  0,
             "resume_events":   0,
             "day_of_run":      1,
+            "n_fallback":      0,
+            "n_judge_empty":   0,
             "started_at":      datetime.datetime.now(timezone.utc).isoformat(),
             "htb_snapshot":    htb_status(),
         }
     with open(STATE_PATH, encoding="utf-8") as f:
-        return json.load(f)
+        s = json.load(f)
+    s.setdefault("n_fallback", 0)
+    s.setdefault("n_judge_empty", 0)
+    return s
 
 
 def save_state(state: dict) -> None:
@@ -189,7 +203,7 @@ def append_row_to_parquet(row: dict) -> None:
         "reasoning":             float(row["reasoning"]),
         "instruction_following": float(row["instruction_following"]),
         "format_compliance":     float(row["format_compliance"]),
-        "overall_applicable":    float(row["overall_applicable"]),
+        "verbosity":             float(row["verbosity"]),
         "judge_empty":           bool(row["judge_empty"]),
         "fallback_triggered":    bool(row["fallback_triggered"]),
         "retry_count":           int(row["retry_count"]),
@@ -198,6 +212,7 @@ def append_row_to_parquet(row: dict) -> None:
         "cost_usd":              0.0,
         "provider":              "openrouter",
         "day_of_run":            int(row["day_of_run"]),
+        "difficulty":            str(row.get("difficulty") or ""),
         "judge_model":           str(row["judge_model"]),
         "parse_error":           str(row.get("parse_error") or ""),
         "judge_latency_ms":      int(row["judge_latency_ms"]),
@@ -325,7 +340,7 @@ def build_result_row(
         "reasoning":             scores["reasoning"],
         "instruction_following": scores["instruction_following"],
         "format_compliance":     scores["format_compliance"],
-        "overall_applicable":    scores["overall_applicable"],
+        "verbosity":             scores["verbosity"],
         "judge_empty":           scores["judge_empty"],
         "fallback_triggered":    eval_result.fallback_triggered or scores["fallback_triggered"],
         "retry_count":           int(eval_result.retry_count) + int(scores["retry_count"]),
@@ -336,6 +351,7 @@ def build_result_row(
         "judge_latency_ms":      scores["judge_latency_ms"],
         "judge_tokens_used":     scores["judge_tokens_used"],
         "day_of_run":            day_of_run,
+        "difficulty":            prompt_obj.get("difficulty") or "",
     }
 
 
@@ -408,6 +424,10 @@ def make_process_pair(state: dict, pbar: "tqdm | None" = None):
             return
         with _STATE_LOCK:
             state["total_calls"] += 1 + int(scores["retry_count"])
+            if eval_result.fallback_triggered or scores.get("fallback_triggered"):
+                state["n_fallback"] = state.get("n_fallback", 0) + 1
+            if scores.get("judge_empty"):
+                state["n_judge_empty"] = state.get("n_judge_empty", 0) + 1
             day_of_run = state["day_of_run"]
             state["htb_snapshot"] = htb_status()
             save_state(state)
@@ -431,7 +451,7 @@ def make_process_pair(state: dict, pbar: "tqdm | None" = None):
                 f"r={_fmt_score(scores['reasoning'])} "
                 f"i={_fmt_score(scores['instruction_following'])} "
                 f"fc={_fmt_score(scores['format_compliance'])} "
-                f"| overall={_fmt_score(scores['overall_applicable'])}"
+                f"v={_fmt_score(scores['verbosity'])}"
             )
         _write(
             f"[{pid}] eval={_short_model(model)}{fb_tag}{retry_tag} "
@@ -442,6 +462,90 @@ def make_process_pair(state: dict, pbar: "tqdm | None" = None):
             pbar.update(1)
 
     return process_pair
+
+
+# ── Quota-exhaustion display blocks ──────────────────────────────────────────
+# Pure stdout. Reuses existing state values and htb_status() — no new source
+# of truth for reset time, call counts, or fallback counts.
+
+_QUOTA_BOX_BAR = "═" * 47
+_QUOTA_BOX_DIV = "  " + "─" * 45
+
+
+def _fmt_hh_mm(total_secs: float) -> tuple[int, int]:
+    secs = max(0.0, total_secs)
+    return int(secs // 3600), int((secs % 3600) // 60)
+
+
+def _print_quota_exhausted_box(state: dict, completed: int, total: int,
+                               reset_at: datetime.datetime) -> None:
+    """Print the ONCE-per-sleep status block. Called by the on_quota_enter hook."""
+    snap = htb_status()
+    root = snap.get("root", {})
+    daily_budget = int(root.get("daily_budget", 0))
+    daily_remaining = int(root.get("daily_remaining", 0))
+    calls_today = max(0, daily_budget - daily_remaining)
+
+    utc_now = datetime.datetime.now(timezone.utc)
+    remaining_pairs = max(0, total - completed)
+    pct = round(completed / total * 100, 1) if total else 0.0
+    hh, mm = _fmt_hh_mm((reset_at - utc_now).total_seconds())
+
+    lines = [
+        "",
+        _QUOTA_BOX_BAR,
+        "  KRITERION — DAILY QUOTA EXHAUSTED",
+        _QUOTA_BOX_BAR,
+        f"  Completed pairs:   {completed} / {total}   ({pct}%)",
+        f"  Remaining pairs:   {remaining_pairs}",
+        f"  Day of run:        {state.get('day_of_run', '?')}",
+        f"  Calls used today:  {calls_today} / {daily_budget}",
+        f"  Fallbacks used:    {state.get('n_fallback', 0)}",
+        _QUOTA_BOX_DIV,
+        f"  UTC now:           {utc_now:%Y-%m-%d %H:%M:%S} UTC",
+        f"  Quota resets:      {reset_at:%Y-%m-%d %H:%M:%S} UTC",
+        f"  Time until reset:  {hh}h {mm}m",
+        _QUOTA_BOX_DIV,
+        "  Sleeping in-process. Resumes automatically at reset.",
+        "  Safe to leave running. Checkpoints are on disk —",
+        "  Ctrl+C and re-run resumes from the same point.",
+        _QUOTA_BOX_BAR,
+        "",
+    ]
+    print("\n".join(lines), flush=True)
+
+
+def _print_wake_tick(reset_at: datetime.datetime, remaining_secs: float) -> None:
+    """Compact heartbeat line, fires once per ~5-min poll iteration."""
+    utc_now = datetime.datetime.now(timezone.utc)
+    hh, mm = _fmt_hh_mm(remaining_secs)
+    print(f"  [wake-check] {utc_now:%H:%M:%S} UTC — {hh}h {mm}m until reset",
+          flush=True)
+
+
+def _print_resume_banner(state: dict) -> None:
+    utc_now = datetime.datetime.now(timezone.utc)
+    print(f"  RESUMING — quota reset detected at "
+          f"{utc_now:%Y-%m-%d %H:%M:%S} UTC. Day {state.get('day_of_run', '?')}.",
+          flush=True)
+
+
+def _print_completion_box(state: dict, completed: int, total: int) -> None:
+    lines = [
+        "",
+        _QUOTA_BOX_BAR,
+        "  KRITERION — RUN COMPLETE",
+        _QUOTA_BOX_BAR,
+        f"  Completed pairs:    {completed} / {total}",
+        f"  Total days elapsed: {state.get('day_of_run', '?')}",
+        f"  Total fallbacks:    {state.get('n_fallback', 0)}",
+        f"  Judge-empty rows:   {state.get('n_judge_empty', 0)}",
+        _QUOTA_BOX_DIV,
+        "  Run complete. Run leaderboard.py next.",
+        _QUOTA_BOX_BAR,
+        "",
+    ]
+    print("\n".join(lines), flush=True)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -502,6 +606,7 @@ def main() -> None:
         if os.path.exists(PARQUET_PATH):
             pq.read_table(PARQUET_PATH).to_pandas().to_csv(FINAL_CSV_PATH, index=False)
         save_metadata(state, len(completed_pairs), total_pairs)
+        _print_completion_box(state, len(completed_pairs), total_pairs)
         return
 
     if len(completed_pairs) > 0:
@@ -520,14 +625,46 @@ def main() -> None:
         "{l_bar}{bar}| {n_fmt}/{total_fmt} pairs "
         "[{elapsed}<{remaining}, {rate_fmt}]{postfix}"
     )
+
+    # Hooks share live state via closure. orch_holder is a one-element list so
+    # the closures can read orch.stats.completed after orch is constructed.
+    orch_holder: list = []
+    initial_completed = len(completed_pairs)
+
+    def _live_completed() -> int:
+        if not orch_holder:
+            return initial_completed
+        return initial_completed + int(orch_holder[0].stats.completed)
+
+    def on_quota_enter(reset_at: datetime.datetime) -> None:
+        _print_quota_exhausted_box(state, _live_completed(), total_pairs, reset_at)
+
+    def on_quota_tick(reset_at: datetime.datetime, remaining_secs: float) -> None:
+        _print_wake_tick(reset_at, remaining_secs)
+
+    def on_quota_resume() -> None:
+        # A natural wake means we slept through a UTC day boundary; bump
+        # day_of_run so the next batch of rows is tagged with the new day.
+        with _STATE_LOCK:
+            state["day_of_run"] = int(state.get("day_of_run", 1)) + 1
+            save_state(state)
+        _print_resume_banner(state)
+
     try:
         with tqdm(total=len(todo_pairs), desc="Evaluating", unit="pair",
                   bar_format=bar_fmt, dynamic_ncols=True) as pbar:
-            orch = EvalOrchestrator(EVALUATOR_MODELS, make_process_pair(state, pbar))
+            orch = EvalOrchestrator(
+                EVALUATOR_MODELS,
+                make_process_pair(state, pbar),
+                on_quota_enter=on_quota_enter,
+                on_quota_tick=on_quota_tick,
+                on_quota_resume=on_quota_resume,
+            )
+            orch_holder.append(orch)
             orch.enqueue_all(todo_pairs)
             stats = orch.run()
     except KeyboardInterrupt:
-        print("\nInterrupted — state saved.", flush=True)
+        print("\n  Interrupted — checkpoints saved, re-run to resume.", flush=True)
         sys.exit(0)
 
     final_set = load_completed_pairs()
@@ -539,6 +676,9 @@ def main() -> None:
         pq.read_table(PARQUET_PATH).to_pandas().to_csv(FINAL_CSV_PATH, index=False)
 
     save_metadata(state, final_completed, total_pairs)
+
+    if final_completed >= total_pairs:
+        _print_completion_box(state, final_completed, total_pairs)
 
     print("\n── Run summary ──────────────────────────────────────────────────────")
     print(f"  Completed:      {stats.completed}")
