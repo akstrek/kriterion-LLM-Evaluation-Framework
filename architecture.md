@@ -21,7 +21,8 @@ kriterion/
 │   ├── test_htb.py            # HTB token refill, borrowing, ceiling, daily decrement, reset
 │   ├── test_drr.py            # DRR fairness under quota pressure, htb_check gating
 │   ├── test_scoring.py        # Empty-judge NaN (5-dim), HEADLINE_DIMS excludes format_compliance, overall_strict imputation, bootstrap CI
-│   └── test_fallback.py       # Mock OpenAI client — fallback triggers, retry_count, provider debit
+│   ├── test_fallback.py       # Mock OpenAI client — fallback triggers, retry_count, provider debit
+│   └── test_retry.py          # Retry-After / X-RateLimit-Reset honoring, full-jitter backoff bounds, is_retryable classes, 4xx fail-fast, 5xx retry
 ├── prompts/
 │   └── prompt_suite.json      # 600 prompts (6 cats × 100; each prompt tagged easy/medium/hard/expert at 15/25/35/25)
 ├── index.html                 # Vite entry
@@ -68,7 +69,7 @@ Not in repo (would be produced by a run): `data/rows/*.parquet`, `data/eval_resu
 
 The current evaluator roster — `moonshotai/kimi-k2.6:free`, `google/gemma-4-31b-it:free`, `openai/gpt-oss-120b:free` — shares HTB leaves with their fallback hops: `kimi → gemma-4-26b-a4b-it` debits the `google` leaf, `gemma-4-31b-it → gpt-oss-20b` debits the `openai` leaf, and `gpt-oss-120b → gemma-4-31b-it` also debits the `google` leaf. This is why the `google` leaf carries the largest daily budget (it absorbs two lanes' fallback traffic plus its own primary).
 
-Fallback hops are taken **once** after `MAX_RETRY=2` primary attempts exhaust. The fallback also passes through HTB on its own provider — see §3.
+Fallback hops are taken **once** after the primary's retries exhaust (`MAX_RETRY=3` attempts) **or** immediately when the primary returns a non-retryable error (see §3.4). The fallback also passes through HTB on its own provider — see §3.
 
 API routing (config/llm.py:86-89):
 ```python
@@ -126,8 +127,10 @@ Run constants:
 | Root daily budget | 950 RPD | config/llm.py `_ROOT_RPD` |
 | Eval daily sub-budget | 650 RPD, split by guarantee weight | `_EVAL_RPD` + `_split_eval_budget()` |
 | Judge daily sub-budget | 300 RPD on `nvidia` | `_JUDGE_RPD` |
-| `MAX_RETRY` | 2 (initial + 1 retry) | config/llm.py |
-| `_RETRY_DELAYS` | `[30]` seconds | config/llm.py |
+| `MAX_RETRY` | 3 (initial + 2 retries) | config/llm.py |
+| Retry backoff | Retry-After header if present, else full-jitter exp `random.uniform(0, min(60, 2·2ⁿ))` | `_compute_backoff()` / `_retry_after_seconds()` |
+| `_BACKOFF_BASE` / `_BACKOFF_CAP` | 2.0s / 60.0s (cap also clamps server header) | config/llm.py |
+| Node burst | 2 permits (keeps post-idle peak < 20 RPM) | config/llm.py `_NODE_BURST` |
 | Adaptive throttle trigger | trailing-60s 429 rate > 30% | `AdaptiveThrottle.THROTTLE_TRIGGER` |
 | Throttled root rate | 0.15 req/sec for 300s cooldown | `_THROTTLED_RATE` |
 
@@ -136,7 +139,7 @@ Run constants:
 Tree (single tree-wide `threading.Lock`):
 
 ```
-root (0.3/s, ceil 0.3, RPD 950, burst 5)
+root (0.3/s, ceil 0.3, RPD 950, burst 2)
  ├── nvidia       (0.10/s,  RPD 300)   ← judge only
  ├── openai       (0.05/s,  RPD 163)
  ├── moonshotai   (0.05/s,  RPD 163)
@@ -147,7 +150,8 @@ Eval providers are `openai`, `moonshotai`, `google`; their per-leaf RPD is compu
 
 - `HTBNode.refill()` is continuous: `tokens = min(ceil, tokens + elapsed * rate_per_sec)`.
 - `HTBTree.acquire(provider)` walks leaf→root: every node on the path must have ≥1 token AND `daily_remaining > 0`. On success it decrements both at every node; otherwise it blocks for the worst-case wait, capped at 5s per spin.
-- **Daily budget decrements on every gross attempt** (including 429 retries) — mirrors OpenRouter's accounting.
+- **Daily budget decrements on every gross attempt** (including 429 retries) — intentional, because OpenRouter counts failed 429 requests against the free-tier daily quota, so the local counter must mirror that to enter the quota-sleep at the right time. (This is why the retry mechanics in §3.4 minimize *wasted* 429s rather than relaxing this accounting.)
+- **Node burst is 2 permits** so a post-idle catch-up can't push the root over OpenRouter's 20 RPM free-tier ceiling (peak/60s ≈ 2 + 0.3·58 ≈ 19.4 < 20).
 - `ceil_per_sec` equals the root rate for every leaf, so an idle sibling's token budget can be fully borrowed (the root's bucket is the only hard ceiling).
 - `reset_daily()` walks the tree and restores every `daily_remaining` to its initial `daily_budget` — invoked on the 00:01 UTC wake.
 
@@ -157,9 +161,10 @@ Eval providers are `openai`, `moonshotai`, `google`; their per-leaf RPD is compu
 
 ### 3.4 Retry + fallback orchestration (call_model)
 
-1. Up to `MAX_RETRY=2` attempts on the primary, each gated by `HTBTree.acquire(primary_provider)` and separated by a 30s `_interruptible_sleep`.
-2. On exhaustion **or** on `DailyQuotaExhausted` from the primary's path, one attempt on `FALLBACK_MAP[model_id]` if defined — also gated by `HTBTree.acquire(fallback_provider)`. Fallback debits the fallback's HTB leaf, not the primary's.
-3. If everything fails, the last exception is raised. `DailyQuotaExhausted` propagates all the way to `EvalOrchestrator`.
+1. Up to `MAX_RETRY=3` attempts on the primary, each gated by `HTBTree.acquire(primary_provider)`. Between attempts, `_interruptible_sleep(_compute_backoff(last_exc, attempt))` waits: the server's `Retry-After` / `X-RateLimit-Reset` header when present (clamped to `_BACKOFF_CAP`, plus sub-second jitter so the workers don't re-sync), otherwise full-jitter exponential backoff. This replaces the old fixed `[30, 90]`s schedule.
+2. **Retry-class discrimination (`is_retryable`).** Only 429 / 5xx / timeouts / connection errors are retried. Non-retryable errors — 4xx client errors and empty `choices` — break out of the retry loop immediately (no sleep, no extra gross attempt) and drop straight to the fallback hop, so they don't burn daily-quota units on attempts that can't succeed. The OpenRouter daily-cap 429 (`free-models-per-day`) is still converted to `DailyQuotaExhausted` *before* the classifier and is never retried.
+3. On exhaustion **or** on `DailyQuotaExhausted` from the primary's path, one attempt on `FALLBACK_MAP[model_id]` if defined — also gated by `HTBTree.acquire(fallback_provider)`. Fallback debits the fallback's HTB leaf, not the primary's.
+4. If everything fails, the last exception is raised. `DailyQuotaExhausted` propagates all the way to `EvalOrchestrator`.
 
 ### 3.5 DRR scheduler (config/scheduler.py)
 
@@ -214,7 +219,7 @@ Atomic per-row parquet writes via `tmp → fsync → os.replace`: `data/rows/{pr
 2. **Eval and judge HTB sub-budgets are sibling-independent.** Splitting 950 RPD into 650 (eval, weighted across moonshotai/openai/google) and 300 (judge on nvidia) makes it structurally impossible to exhaust the judge mid-pair while eval succeeds — that eliminated the `pending_evals` checkpoint and `_QuotaSignal` plumbing.
 3. **DRR over `ThreadPoolExecutor.submit` for fairness.** With workers ≪ pairs, FIFO submission lets a single slow provider starve the others. DRR with quantum=1 + an `htb_check` gate guarantees per-model progress and skips lanes whose provider is currently tokenless without burning quantum.
 4. **In-process quota sleep replaces `schtasks`.** A 5-min poll loop until 00:01 UTC handles Windows suspend/resume without a separate scheduled task; the runner no longer needs `sys.exit` + re-launch.
-5. **Single fallback hop, no chains.** `MAX_RETRY=2` then one fallback model. Chains amplify cost on the bad path and obscure attribution; one hop is enough to absorb most transient outages.
+5. **Single fallback hop, no chains.** `MAX_RETRY=3` (with Retry-After-aware backoff) then one fallback model. Chains amplify cost on the bad path and obscure attribution; one hop is enough to absorb most transient outages.
 6. **All non-applicable judge dimensions are NaN.** No 0.0 defaults anywhere — see §4.
 
 ## 4. SCORING
@@ -357,7 +362,7 @@ Resolved since the prior revision (no longer gaps):
 - Empty-judge handling now NaN-s all four dims and sets `judge_empty=True` — matches the original intent.
 - `eval_state.json` no longer carries `pending_evals` / `last_exhausted` / `next_run_utc`; the in-process quota-sleep loop replaces the `schtasks` round-trip.
 - Per-provider 4.0s gap + 18-RPM sliding window superseded by the HTB tree.
-- `tests/` directory exists — 24 mocked tests cover HTB, DRR, scoring, and fallback.
+- `tests/` directory exists — 36 mocked tests cover HTB, DRR, scoring, fallback, and retry mechanics.
 - **First full run completed** — `data/eval_results.csv` exists (600 pairs across the current 3-evaluator roster). `leaderboard.py` is unblocked.
 - **Stale-row leak fixed** — `load_completed_pairs()` and `consolidate_rows_to_parquet()` now filter by current `EVALUATOR_MODELS` via `pyarrow.compute.is_in`. Surfaced when 16 prior-roster `deepseek/*` rows in `data/rows/` were silently consolidated into the leaderboard as a ghost lane with all-1.0 dim scores (from fallback-hop responses recorded under the requested model id).
 - **`Blog.tsx` model-cards revision** — 4 compound cards (Judge + 3 Evaluators) with role badges, provider glyphs (simple-icons SVG for OpenAI/Google/NVIDIA, monogram for MoonshotAI), architecture-type pill (MoE/Dense/Hybrid/LatentMoE), and click-to-expand inline fallbacks. Section 04 rewritten around HTB + DRR with an inline ASCII tree; Section 05 updated to the new `overall_applicable`/`overall_strict`/`ci_low`/`ci_high`/`n_judge_empty`/`n_fallback` schema; Section 07 evaluator roster corrected; new "Traffic Shaping the Free Tier" pitch section inserted between header and Section 01.
@@ -371,4 +376,5 @@ Resolved since the prior revision (no longer gaps):
 - **Family-based model-color registry.** New `src/lib/modelColors.ts` maps each model id to a deterministic color by provider family (Google → blue, OpenAI → green, Anthropic → orange, Moonshot → violet, Meta → indigo, Mistral → orange-red, DeepSeek → cyan, Qwen → magenta, xAI → rose, Cohere → amber; unknown families fall through a bright distinct palette). `buildModelColors(models)` returns the resolved `Map`, consumed identically by the scatter, the table's expanded category bars, the deep-dive bars, and the radar. Replaces the prior three-color cycling array used independently in each chart.
 - **Dimensions page placeholder content cut + label-clipping fixed.** `DimensionDeepDive` no longer renders the hardcoded "Sample Completions" cards (no per-prompt response data exists in the pipeline). YAxis width widened from 100→180px so long ids like `moonshotai/kimi-k2.6:free` aren't clipped; display name shown on the axis with full id in the tooltip. Domain switched from `[50, 100]` to `[0, 100]` with explicit numeric `LabelList` at each bar's right edge so score differences are visible regardless of axis range. Both Dimensions cards use explicit pixel heights on the chart wrapper (`h-[320px]` / `h-[340px]`) — `flex-1` inside the page's `flex flex-col` grid cell caused recharts' `ResponsiveContainer` to read `clientHeight: 0` and render nothing on first paint.
 - **5-dim rubric + 600-prompt suite + difficulty stratification (this revision).** `verbosity` promoted to a first-class judge dimension; `format_compliance` still scored on every prompt and reported as `avg_format_compliance` but excluded from the headline mean. Headline policy single-sourced in `leaderboard.HEADLINE_DIMS`; `evaluator.score_response` is parse-only (no row-level `overall_applicable`). Prompt suite expanded from 200 / 5 cats / 40 each to **600 / 6 cats / 100 each**, with every prompt tagged `easy | medium | hard | expert` at 15/25/35/25 per category (strict validator in `generate_prompts.py`). `adversarial_edge_cases` dropped; `safety_calibration` (bidirectional over/under-refusal) and `hallucination_under_uncertainty` (false-premise / fabrication bait) added. Parquet schema: +`verbosity`, +`difficulty`, −`overall_applicable` (20 columns). New `data/leaderboard_by_difficulty.csv` exposes per-(model × tier) separation; `_publish_to_public()` mirrors both CSVs into `public/data/`. `batch_eval.py` gains a quota-exhausted status box (printed once on entry), 5-min wake-tick heartbeat, resume banner (`day_of_run` bump on natural wake), completion box, and clean Ctrl+C exit — scheduler wired via optional `on_quota_{enter,tick,resume}` callbacks; no scheduling or timing changes. Judge prompt gains a one-line note: correctly identifying a false-premise or unanswerable request as such is the high-scoring response. Frontend: `ModelPerformance` gains `verbosity` + cat swap; new `ModelDifficultyRow` + `loadLeaderboardByDifficulty()`; Radar 5 axes; `DimensionDeepDive` adds Verbosity; `LeaderboardTable` adds Verbosity column + cat swap + new 4-dim headline footer; new `DifficultyBreakdown` chart on Rankings. Methods mirrors the new 5-dim judge prompt char-for-char with `config/llm.py`; Blog drops three stale "deterministic parser" false-claim sites (lines 512, 540, 832) and bumps 200 → 600 in copy. 25/25 tests pass; `tsc --noEmit` clean. Auto-deploy on Vercel is gated off `main` via `vercel.json` `git.deploymentEnabled.main:false` so the in-flight revision can be pushed without redeploying production until the eval completes.
+- **429-throttling collapse on day one** (was: <200 of 1800 pairs completed before the daily quota drained, with heavy EVAL/JUDGE FAIL output). Root cause: the retry path used a fixed `[30, 90]`s no-jitter schedule, ignored the server's `Retry-After` / `X-RateLimit-Reset` header, retried *every* error class (including non-retryable 4xx), and a `_NODE_BURST=5` allowed brief >20 RPM bursts. Because OpenRouter counts failed 429s against the 1000/day free quota, each blind, badly-timed retry permanently burned a quota unit — so the day's budget drained on wasted attempts long before useful work completed. Fix (confined to `config/llm.py`, retry mechanics only — HTB accounting, DRR, scheduler, batch_eval, scoring, and frontend all untouched): honor `Retry-After`/`X-RateLimit-Reset` then full-jitter exponential backoff (`_retry_after_seconds` / `_compute_backoff`); `is_retryable()` retries only 429/5xx/timeouts and fails 4xx + empty-choices fast straight to the fallback hop; `_NODE_BURST` 5 → 2 to stay under the 20 RPM ceiling; `MAX_RETRY` stays 3. Daily debit-per-attempt is deliberately **kept** (it correctly mirrors the server's 429-counting). All market-standard techniques (OpenAI cookbook / Anthropic + Google SDKs); no novel algorithm. 36/36 mocked tests pass (new `tests/test_retry.py`). Throughput ceiling is unchanged — 3600 calls on a 1000/day cap is inherently multi-day, handled by the existing quota-sleep; the fix converts wasted 429 retries into completed pairs.
 - **Eval-budget mis-allocation under current model layout** (was: openai 488 / moonshotai 81 / google 81 RPD). Root cause: `_PROVIDER_RATES` carried the 0.15-vs-0.025 prior from a layout where `openai/*` hosted **two** primary evaluators (`gpt-oss-20b` + `gpt-oss-120b`) on a shared provider lane, and small open-weight providers were prior-flagged as flaky. Current `EVALUATOR_MODELS` is one model per provider (`kimi-k2.6` on moonshotai, `gemma-4-31b-it` on google, `gpt-oss-120b` on openai), so the 6× openai skew left moonshotai/google binding hard (~81 RPD vs ~158 needed/day) while openai sat on +330 RPD of unused budget. Rate side wasn't load-bearing — every leaf's `ceil_per_sec` equals the root rate, so leaves fully borrow; weights only affected `_split_eval_budget()`. Fix applied: `_PROVIDER_RATES = {nvidia: 0.10, openai: 0.05, moonshotai: 0.05, google: 0.10}` — equal across the two non-fallback-receiving eval lanes, double weight for google since two other lanes' fallback hops (kimi → gemma-4-26b, gpt-oss-120b → gemma-4-31b) land on its leaf. New eval split: openai 163 / moonshotai 163 / google 325 RPD. Judge (nvidia 300 RPD) unchanged.

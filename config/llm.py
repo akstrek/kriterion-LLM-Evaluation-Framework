@@ -18,13 +18,20 @@ from __future__ import annotations
 
 import collections
 import os
+import random
 import threading
 import time
 from dataclasses import dataclass, field
 from typing import Literal
 
 from dotenv import load_dotenv
-from openai import OpenAI, RateLimitError
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    OpenAI,
+    RateLimitError,
+)
 
 load_dotenv()
 
@@ -131,7 +138,9 @@ _PROVIDER_RATES: dict[str, float] = {
 
 _ROOT_RATE      = 0.3      # 18 RPM (steady-state refill)
 _ROOT_CEIL      = 0.3      # max effective rate when borrowing (metadata)
-_NODE_BURST     = 5.0      # bucket capacity in permits — allows brief catch-up
+_NODE_BURST     = 2.0      # bucket capacity in permits. Kept low so a post-idle
+                           # burst can't push the root over OpenRouter's 20 RPM
+                           # free-tier ceiling: peak/60s ≈ 2 + 0.3*58 ≈ 19.4 < 20.
 _THROTTLED_RATE = 0.15
 _ROOT_RPD       = 950
 _EVAL_RPD       = 650
@@ -360,14 +369,93 @@ _client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
 )
 
-MAX_RETRY = 3              # initial attempt + 2 retries — rides ~2 min upstream throttle
-_RETRY_DELAYS = [30, 90]   # delays before retry #1 and retry #2
+MAX_RETRY = 3              # initial attempt + 2 retries. Kept low: every 429'd
+                           # attempt still counts against the 1000/day free quota,
+                           # so blind retries are expensive — we lean on Retry-After
+                           # timing (below) to make the few retries we do land.
+_BACKOFF_BASE = 2.0        # full-jitter exponential base (seconds)
+_BACKOFF_CAP  = 60.0       # ceiling for any single backoff — also clamps a server
+                           # Retry-After header so a hostile/huge value can't park
+                           # a worker thread for hours.
 
 
 def _interruptible_sleep(seconds: float) -> None:
     end = time.time() + seconds
     while time.time() < end:
         time.sleep(min(0.5, end - time.time()))
+
+
+def _retry_after_seconds(exc: Exception) -> float | None:
+    """Server-specified wait from a rate-limit response, or None.
+
+    Prefers the standard `Retry-After` (delta-seconds form) and falls back to
+    OpenRouter's `X-RateLimit-Reset` (epoch milliseconds). Exception-safe: any
+    missing attribute or unparseable value yields None so the caller drops to
+    exponential backoff. Timeouts / connection errors have no `.response` and
+    therefore return None here.
+    """
+    resp = getattr(exc, "response", None)
+    headers = getattr(resp, "headers", None)
+    if headers is None:
+        return None
+    try:
+        ra = headers.get("retry-after")
+        if ra is not None:
+            # delta-seconds form only; HTTP-date form is ignored (→ backoff).
+            secs = float(ra)
+            if secs >= 0:
+                return secs
+    except (TypeError, ValueError):
+        pass
+    try:
+        reset_ms = headers.get("x-ratelimit-reset")
+        if reset_ms is not None:
+            delta = float(reset_ms) / 1000.0 - time.time()
+            if delta > 0:
+                return delta
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
+def _compute_backoff(exc: Exception, attempt: int) -> float:
+    """Seconds to wait before the next retry of a just-failed `attempt` (0-based).
+
+    Honors the server's Retry-After / X-RateLimit-Reset when present (clamped to
+    _BACKOFF_CAP, plus a little jitter so the worker threads don't all wake on the
+    exact same reset instant). Otherwise: full-jitter exponential backoff
+    (AWS / OpenAI-cookbook style) to de-correlate the threads sharing the root.
+    """
+    server = _retry_after_seconds(exc)
+    if server is not None:
+        base = min(_BACKOFF_CAP, max(0.0, server))
+        jitter = random.uniform(0.0, min(1.0, _BACKOFF_CAP - base))
+        return base + jitter
+    ceiling = min(_BACKOFF_CAP, _BACKOFF_BASE * (2 ** attempt))
+    return random.uniform(0.0, ceiling)
+
+
+def is_retryable(exc: Exception) -> bool:
+    """Whether an exception from an API call is worth another attempt.
+
+    Retry transient transport/server failures (429, 5xx, timeouts, connection
+    drops); fail fast on 4xx client errors and anything else so we don't burn
+    daily-quota units on attempts that cannot succeed. DailyQuotaExhausted is
+    handled separately by call_model and is never retried here.
+    """
+    if isinstance(exc, DailyQuotaExhausted):
+        return False
+    if isinstance(exc, (APITimeoutError, APIConnectionError)):
+        return True
+    if isinstance(exc, APIStatusError):
+        sc = getattr(getattr(exc, "response", None), "status_code", None)
+        if sc is None:
+            # No status available — trust the typed RateLimitError, else fail fast.
+            return isinstance(exc, RateLimitError)
+        if sc == 429 or 500 <= sc < 600:
+            return True
+        return False  # 4xx client error — won't succeed on retry.
+    return False      # empty-choices ValueError, unknown errors → fail fast.
 
 
 def _provider_of(model_id: str) -> str:
@@ -432,7 +520,10 @@ def call_model(
     """Single LLM call with HTB rate limiting, retries, and one fallback hop.
 
     - role is recorded for telemetry; HTB sub-budgets are enforced by provider.
-    - Retries: MAX_RETRY total attempts on the primary model (initial + 1).
+    - Retries: up to MAX_RETRY attempts on the primary model. Retryable failures
+      (429 / 5xx / timeouts) wait per the server's Retry-After header when present,
+      otherwise full-jitter exponential backoff. Non-retryable errors (4xx, empty
+      choices) fail fast straight to the fallback hop — no retry, no wasted quota.
     - Fallback: on primary exhaustion, one attempt on FALLBACK_MAP[model_id]
       (if defined). The fallback call also passes through HTB acquire on its
       own provider.
@@ -447,8 +538,8 @@ def call_model(
 
     for attempt in range(MAX_RETRY):
         if attempt > 0:
-            delay = _RETRY_DELAYS[min(attempt - 1, len(_RETRY_DELAYS) - 1)]
-            _interruptible_sleep(delay)
+            # last_exc is the failure from attempt-1 (guaranteed non-None here).
+            _interruptible_sleep(_compute_backoff(last_exc, attempt - 1))
 
         try:
             result, exc, _ = _attempt_one(
@@ -466,6 +557,8 @@ def call_model(
         retry_count += 1
         if isinstance(exc, DailyQuotaExhausted):
             break  # don't waste another retry on daily exhaustion
+        if not is_retryable(exc):
+            break  # 4xx / non-transient — retrying just burns quota; go to fallback
 
     # ── Fallback hop ─────────────────────────────────────────────────────────
     fb_id = FALLBACK_MAP.get(model_id)
