@@ -32,18 +32,21 @@ kriterion/
 ├── components.json            # shadcn-ui config
 ├── src/
 │   ├── main.tsx               # React root
-│   ├── App.tsx                # Routes: /, /rankings, /dimensions, /frontier, /methods, /blog
+│   ├── App.tsx                # Routes: /, /rankings, /dimensions, /methods, /blog
 │   ├── index.css
 │   ├── lib/
 │   │   ├── loadCsv.ts         # Fetch /data/leaderboard.csv; FALLBACK_DATA on miss
+│   │   ├── modelColors.ts     # Family-based color registry + modelDisplayName()
 │   │   └── utils.ts           # cn() helper
 │   ├── types/index.ts         # ModelPerformance interface
 │   ├── components/
-│   │   ├── pages/             # Overview, Rankings, Dimensions, Frontier, Methods, Blog
+│   │   ├── pages/             # Overview, Rankings, Dimensions, Methods, Blog
+│   │   │                      # (Frontier.tsx on disk but DEPRECATED — not routed)
 │   │   ├── layout/            # PageFrame, Navbar, BottomLeft, BottomRight,
 │   │   │                      # CtaButton, ExpandableViz, GrainOverlay, ScrollableZone
-│   │   └── charts/            # CostQualityScatter, DimensionDeepDive,
-│   │                          # LeaderboardTable, RadarComparison
+│   │   └── charts/            # DimensionDeepDive, LeaderboardTable,
+│   │                          # PerformanceLatencyScatter, RadarComparison
+│   │                          # (CostQualityScatter.tsx on disk but DEPRECATED — no consumers)
 ├── components/ui/             # shadcn primitives: badge, button, chart,
 │                              # dropdown-menu, separator, tooltip
 ├── lib/utils.ts               # cn() (duplicate path used by shadcn imports)
@@ -257,30 +260,44 @@ Leaderboard aggregation (`leaderboard.compute_leaderboard`):
 
 ## 5. FRONTEND
 
-Routes (src/App.tsx:6-26):
+Routes (src/App.tsx):
 
 | Route | Lazy import | File |
 |---|---|---|
 | `/` | `Overview` | src/components/pages/Overview.tsx |
 | `/rankings` | `Rankings` | src/components/pages/Rankings.tsx |
 | `/dimensions` | `Dimensions` | src/components/pages/Dimensions.tsx |
-| `/frontier` | `Frontier` | src/components/pages/Frontier.tsx |
 | `/methods` | `Methods` | src/components/pages/Methods.tsx |
 | `/blog` | `Blog` | src/components/pages/Blog.tsx |
 
-Wrapped in `<PageFrame>` + `<AnimatePresence>` (motion). Suspense fallback `null`.
+Wrapped in `<PageFrame>` + `<AnimatePresence>` (motion). Suspense fallback `null`. Navbar items match the route list — five tabs, no Frontier.
+
+`Frontier.tsx` and `CostQualityScatter.tsx` remain on disk with `// DEPRECATED` headers (and `@ts-nocheck` on the scatter so the field rename doesn't break it). They are unrouted and unimported — kept pending a possible repurpose, not deletion. Free-tier evaluation makes the cost axis identically zero, which was the reason to remove the page.
 
 Layout components: `PageFrame`, `Navbar`, `BottomLeft`, `BottomRight`, `CtaButton`, `ExpandableViz`, `GrainOverlay`, `ScrollableZone`.
 
-Chart components: `CostQualityScatter`, `DimensionDeepDive`, `LeaderboardTable`, `RadarComparison`.
+Chart components (active): `LeaderboardTable`, `PerformanceLatencyScatter` (Rankings), `RadarComparison`, `DimensionDeepDive` (Dimensions).
 
 Data loading (src/lib/loadCsv.ts):
-- `loadLeaderboard()` fetches `/data/leaderboard.csv`, papaparse with `header:true, dynamicTyping:true, skipEmptyLines:true`. A `mapRow()` step maps the new CSV schema (`overall_applicable`, `overall_strict`, `ci_low`, `ci_high`, `avg_<dim>`, `avg_cost_per_prompt_usd`, `latency_p50_ms`) onto the `ModelPerformance` field names the chart components consume; `latency_p50_ms` is divided by 1000 so `LeaderboardTable`'s `.toFixed(1)s` renders seconds, and rows missing `overall_applicable` are dropped. Returns `FALLBACK_DATA` only if zero rows survive mapping.
+- `loadLeaderboard()` fetches `/data/leaderboard.csv`, papaparse with `header:true, dynamicTyping:true, skipEmptyLines:true`. A `mapRow()` step maps the full CSV schema onto `ModelPerformance` field names — `rank`, `overall_applicable` → `overallScore`, `overall_strict`, `ci_low`/`ci_high`, every `avg_<dim>`, `avg_cost_per_prompt_usd`, **`latency_p50_ms`/`latency_p95_ms` (kept in ms — no `/1000`)**, `n_prompts`/`n_judge_empty`/`n_fallback`, and all five `cat_*` columns. Rows missing `overall_applicable` are dropped. Returns `FALLBACK_DATA` only if zero rows survive mapping.
 - `loadEvalResults()` is an alias of `loadLeaderboard`.
 - `loadDimensions()` returns the hard-coded list `["Factuality", "Reasoning", "Instruction Following", "Format Compliance"]`.
-- `FALLBACK_DATA` is used on fetch failure / wrong content-type / parse error. Now contains the three real free-tier evaluators (`moonshotai/kimi-k2.6:free`, `google/gemma-4-31b-it:free`, `openai/gpt-oss-120b:free`) with their actual scores from the latest run, so a CSV miss degrades to truthful (if stale) numbers rather than misleading placeholder labels.
+- `FALLBACK_DATA` carries the three real free-tier evaluators with every field populated from the latest CSV row — so a fetch miss still surfaces truthful numbers with correct CIs, categories, and prompt counts.
 
-`ModelPerformance` (src/types/index.ts) carries `overallScore` (= CSV `overall_applicable`) plus optional `overallStrict`, `ciLow`, `ciHigh` for future use by chart components.
+Color registry (src/lib/modelColors.ts):
+- `buildModelColors(models)` returns a `Map<model, hex>` using **family-based assignment** matched against the model id prefix: Google → `#4285F4`, OpenAI → `#10A37F`, Anthropic → `#D97757`, Moonshot → `#A855F7`, Meta-Llama → `#6366F1`, Mistral → `#F97316`, DeepSeek → `#06B6D4`, Qwen → `#EC4899`, xAI → `#E11D48`, Cohere → `#EAB308`. Unknown families fall through a bright distinct palette by encounter order. The same registry feeds the scatter, the table's expanded category bars, the deep-dive bars, and the radar — so a given model's color is identical across every chart on the dashboard.
+- `modelDisplayName(model)` strips the `:free` suffix and the `<provider>/` prefix (`"moonshotai/kimi-k2.6:free"` → `"kimi-k2.6"`); full id is preserved in HTML `title` tooltips wherever a display name is shown.
+
+`ModelPerformance` (src/types/index.ts) is now the complete projection of the CSV: `rank`, `model`, `overallScore` (= `overall_applicable`), `overallStrict?`, `ciLow?`, `ciHigh?`, four `avg_<dim>` fields, `costPerPrompt`, `latencyP50Ms`/`latencyP95Ms` (milliseconds), `nPrompts`/`nJudgeEmpty`/`nFallback`, and `catFactualRecall`/`catMultiStepReasoning`/`catInstructionFollowing`/`catCodeGeneration`/`catAdversarialEdgeCases`. No dead fields; no aliases.
+
+Rankings page (src/components/pages/Rankings.tsx):
+- `LeaderboardTable` renders 11 columns: Rank · Model (display name + `title` full id) · Overall (with the 95% CI bracket `[lo – hi]` rendered in muted text directly beneath the score) · Factuality · Reasoning · Instruct · Format · Latency P50 (`<int>ms`) · Prompts · Fallbacks. Best-in-column values are underlined. Each row has a chevron expander that opens a detail panel showing `overall_strict` (with the "NaN dimensions imputed with model's own mean" note) and a horizontal mini bar chart of the five `cat_*` scores, color-keyed to the same model color. Two footnotes sit below the table: one explaining why p95 is excluded (free-tier OpenRouter tail latency is provider queue depth, not inference speed), one explaining the overall-score calculation (mean of the four dimension scores rescaled 0–100; CI is a bootstrap over per-prompt scores).
+- `PerformanceLatencyScatter` sits directly below the table. recharts `ScatterChart` with `latencyP50Ms` on x (tick formatter shows seconds) and `overallScore` on y. `<ZAxis dataKey="nPrompts" range={[120, 380]}>` sizes dots by prompt count. Two `<ErrorBar>` elements: vertical from `ciLow` to `ciHigh`, horizontal from `latencyP50Ms` to `latencyP95Ms` (asymmetric, positive offset only). The default recharts `<Legend>` is omitted; a custom legend overlay is absolutely positioned in the chart's top-right (header "MODELS", colored dot + display name per model). Subtitle under the title notes "Error bars show 95% bootstrap CI (vertical) and p50–p95 latency spread (horizontal). Dot size ∝ prompts answered."
+
+Dimensions page (src/components/pages/Dimensions.tsx):
+- `RadarComparison` (left) — 4-axis radar (Factuality / Reasoning / Instruct / Format) per model, domain `[60, 100]`, fills via the shared color registry, legend uses display names.
+- `DimensionDeepDive` (right) — dropdown selects one of the four dimensions; horizontal bar chart sorted desc; YAxis width 180px (no clipping of long ids), domain `[0, 100]` with explicit numeric `LabelList` at each bar's right edge so differences are visible regardless of axis range; bar colors come from the model-color registry; tooltip shows the full id. The placeholder "Sample Completions" section and its hardcoded `SAMPLE_RESPONSES` constant have been removed — no per-prompt response data flows from the Python pipeline into the frontend.
+- Both Dimensions cards use **explicit pixel heights** (`h-[320px]` / `h-[340px]`) on the chart wrapper. recharts `ResponsiveContainer` measures parent `clientHeight` synchronously; a `flex-1` parent inside a `flex flex-col` grid cell can resolve to `0` on first paint, which silently hides the chart. Pixel heights avoid that path.
 
 Stack (package.json): React 19, react-dom 19, react-router-dom 7, Vite 6, TypeScript 5.8, Tailwind 4 + `@tailwindcss/vite`, Recharts 3, motion 12, papaparse 5, shadcn primitives (radix-ui slot), lucide + hugeicons.
 
@@ -318,7 +335,6 @@ No FastAPI, no Modal, no Railway, no server-side runtime. CSV is the wire format
 Items still divergent from `Kriterion_Build_Summary.md` or otherwise pending:
 
 - **Calibration probes**: noted in the rewrite spec as future work; not implemented this revision.
-- **CI bands not yet surfaced in UI**: `ciLow`/`ciHigh`/`overallStrict` flow into `ModelPerformance` from the loader but no chart component consumes them yet — `LeaderboardTable` still displays `overallScore` alone.
 - **HTB provider weights are still hand-set, not learned.** `_PROVIDER_RATES` was rebalanced this revision (see "Resolved" below for the math); the weekly recompute against `failed_calls.json` + parquet success-rate logs is still not automated. Re-tune by hand if a run shows one eval lane binding materially earlier than the others.
 - **Smoke verification only**: tests use mocked OpenAI clients (zero real API calls). End-to-end verification against live OpenRouter is deferred — it burns RPD and requires explicit approval per session.
 - **`Kriterion_Build_Summary.md` itself**: still referenced as authoritative by some upstream tasks — superseded by this doc.
@@ -335,4 +351,8 @@ Resolved since the prior revision (no longer gaps):
 - **`Blog.tsx` retention pass** — header subtitle replaced with a fact hook (`1,200 / 4 / 1996 / 2002 / $0`); pitch section reordered to lead with the "traffic shaping, not rate-limit accounting" thesis, gains an inline SVG HTB tree (leaf widths ∝ RPD share) and a `tc-htb on API quota` chip-led callout that surfaces the `$0` total. Section 03 collapses the full judge rubric behind a `CollapsiblePre` expander, promotes the Gemma 4 31B dual-role line to a visible amber sentence, and tightens the GPT-OSS cross-ref label to `(↑ see card above)`. Section 04 cards 3–5 (Retry / Atomic / Self-Pacing) collapse into one compact label-plus-body strip to break the five-card rhythm. Section 05 leads with a one-line "why two aggregates" sentence and collapses the four `avg_<dim>` cells into one. Section 06 converts to a 3-column "Blog post (strikethrough) vs Benchmark" grid. Footer replaced with a centered `$0 · 1,200 · 2,400 · 0` metric strip. Section 07 left untouched. `tsc --noEmit` clean.
 - **Frontend schema wired to new CSV** — `src/lib/loadCsv.ts` now maps `overall_applicable`/`overall_strict`/`ci_low`/`ci_high`/`avg_<dim>`/`avg_cost_per_prompt_usd`/`latency_p50_ms` (ms→s) onto `ModelPerformance`. `ModelPerformance` gained optional `overallStrict`/`ciLow`/`ciHigh`. `FALLBACK_DATA` replaced with real free-tier evaluator rows from the latest run. `tsc --noEmit` clean. Rankings/Dimensions/Frontier render real data (all four chart components — `LeaderboardTable`, `RadarComparison`, `DimensionDeepDive`, `CostQualityScatter` — pull from the same `loadLeaderboard()` and share the field-name layer, so no chart-component edits were needed).
 - **`public/data/leaderboard.csv` present** — copied from `data/leaderboard.csv` after the first full run; production fetch of `/data/leaderboard.csv` no longer 404s.
+- **Rankings rebuilt around the full CSV signal.** `LeaderboardTable` now renders Rank · Model · Overall + 95% CI bracket · 4 dimensions · Latency (ms) · Prompts · Fallbacks, with chevron-expandable rows surfacing `overall_strict` and a per-row category bar chart of the five `cat_*` scores. Cost column dropped (always `0` on `:free`). `PerformanceLatencyScatter` added beneath the table — recharts ScatterChart with vertical CI error bars, horizontal p50→p95 latency error bars, ZAxis sizing dots by `nPrompts`, and a custom top-right "MODELS" legend overlay. `ModelPerformance` expanded to a full CSV projection (rank, p50/p95 in ms, prompt counts, all five `cat_*`); `latency` no longer divided by 1000 at load time.
+- **Frontier page removed from routing.** `/frontier` route deleted from `App.tsx`; navbar collapsed to five items (Overview / Rankings / Dimensions / Methods / Blog). `Frontier.tsx` and `CostQualityScatter.tsx` kept on disk with `// DEPRECATED` headers (scatter has `@ts-nocheck` so the field rename doesn't break the dead file) — pending a possible repurpose. Free-tier evaluation makes the cost axis identically zero, which is what made the page worth cutting.
+- **Family-based model-color registry.** New `src/lib/modelColors.ts` maps each model id to a deterministic color by provider family (Google → blue, OpenAI → green, Anthropic → orange, Moonshot → violet, Meta → indigo, Mistral → orange-red, DeepSeek → cyan, Qwen → magenta, xAI → rose, Cohere → amber; unknown families fall through a bright distinct palette). `buildModelColors(models)` returns the resolved `Map`, consumed identically by the scatter, the table's expanded category bars, the deep-dive bars, and the radar. Replaces the prior three-color cycling array used independently in each chart.
+- **Dimensions page placeholder content cut + label-clipping fixed.** `DimensionDeepDive` no longer renders the hardcoded "Sample Completions" cards (no per-prompt response data exists in the pipeline). YAxis width widened from 100→180px so long ids like `moonshotai/kimi-k2.6:free` aren't clipped; display name shown on the axis with full id in the tooltip. Domain switched from `[50, 100]` to `[0, 100]` with explicit numeric `LabelList` at each bar's right edge so score differences are visible regardless of axis range. Both Dimensions cards use explicit pixel heights on the chart wrapper (`h-[320px]` / `h-[340px]`) — `flex-1` inside the page's `flex flex-col` grid cell caused recharts' `ResponsiveContainer` to read `clientHeight: 0` and render nothing on first paint.
 - **Eval-budget mis-allocation under current model layout** (was: openai 488 / moonshotai 81 / google 81 RPD). Root cause: `_PROVIDER_RATES` carried the 0.15-vs-0.025 prior from a layout where `openai/*` hosted **two** primary evaluators (`gpt-oss-20b` + `gpt-oss-120b`) on a shared provider lane, and small open-weight providers were prior-flagged as flaky. Current `EVALUATOR_MODELS` is one model per provider (`kimi-k2.6` on moonshotai, `gemma-4-31b-it` on google, `gpt-oss-120b` on openai), so the 6× openai skew left moonshotai/google binding hard (~81 RPD vs ~158 needed/day) while openai sat on +330 RPD of unused budget. Rate side wasn't load-bearing — every leaf's `ceil_per_sec` equals the root rate, so leaves fully borrow; weights only affected `_split_eval_budget()`. Fix applied: `_PROVIDER_RATES = {nvidia: 0.10, openai: 0.05, moonshotai: 0.05, google: 0.10}` — equal across the two non-fallback-receiving eval lanes, double weight for google since two other lanes' fallback hops (kimi → gemma-4-26b, gpt-oss-120b → gemma-4-31b) land on its leaf. New eval split: openai 163 / moonshotai 163 / google 325 RPD. Judge (nvidia 300 RPD) unchanged.
