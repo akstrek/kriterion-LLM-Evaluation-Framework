@@ -242,7 +242,7 @@ const ModelCard: React.FC<{ data: PrimaryCardData }> = ({ data }) => {
 
       {data.alsoFallbackFor && (
         <p className="text-[11px] text-[#F5C387]/80 mb-3 leading-snug">
-          Dual-role — primary evaluator <span className="text-[#C8C2B8]">and</span> fallback for {data.alsoFallbackFor}.
+          Dual-role: primary evaluator <span className="text-[#C8C2B8]">and</span> fallback for {data.alsoFallbackFor}.
         </p>
       )}
 
@@ -360,7 +360,7 @@ const MODEL_CARDS: PrimaryCardData[] = [
     provider: "Google",
     providerKind: "G",
     parameters: "31B dense (all parameters active)",
-    oneLiner: "Google's flagship dense Gemma 4 model — built on the Gemini 3 architecture with a ~550M vision encoder.",
+    oneLiner: "Google's flagship dense Gemma 4 model, built on the Gemini 3 architecture with a ~550M vision encoder.",
     architecturalHighlight: "Sliding-window (1024 tokens) plus global full attention. Proportional RoPE for 256K context coherence.",
     architectureType: "Dense",
     huggingFaceUrl: "https://huggingface.co/google/gemma-4-31B-it",
@@ -418,7 +418,7 @@ export function Blog() {
             </h2>
             <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5">
               <p className="text-[#F5F0E8] text-[14px] leading-relaxed max-w-[600px]">
-                <span className="font-mono text-[#F5C387]">1,200</span> API calls. <span className="font-mono text-[#F5C387]">4</span> architecturally independent models. Two open-source rate-limiting algorithms from <span className="font-mono text-[#F5C387]">1996</span> and <span className="font-mono text-[#F5C387]">2002</span>. Total cost: <span className="font-mono text-[#F5C387]">$0</span>.
+                <span className="font-mono text-[#F5C387]">3,600</span> API calls. <span className="font-mono text-[#F5C387]">4</span> architecturally independent models. <span className="font-mono text-[#F5C387]">1,800</span> evaluated pairs. Two open-source rate-limiting algorithms from <span className="font-mono text-[#F5C387]">1996</span> and <span className="font-mono text-[#F5C387]">2002</span>. Total cost: <span className="font-mono text-[#F5C387]">$0</span>.
               </p>
             </div>
           </motion.div>
@@ -431,7 +431,7 @@ export function Blog() {
             </h3>
             <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5 space-y-4">
               <p className="text-[10px] uppercase tracking-[0.2em] text-[#C8C2B8]/70 font-medium">
-                Before the methodology — the constraint that shaped every decision below
+                Before the methodology, the constraint that shaped every decision below
               </p>
               <p className="text-[#F5F0E8] text-[14px] leading-relaxed font-semibold">
                 Treated as network traffic shaping, not rate-limit accounting.
@@ -442,7 +442,7 @@ export function Blog() {
 
               {/* HTB tree visual — concrete picture of the abstract pill below */}
               <div className="bg-white/[0.03] rounded-lg p-4 border border-white/[0.05]">
-                <p className="text-[10px] uppercase tracking-[0.15em] text-[#C8C2B8]/70 mb-3 font-medium">HTB tree — leaf width ∝ RPD share</p>
+                <p className="text-[10px] uppercase tracking-[0.15em] text-[#C8C2B8]/70 mb-3 font-medium">HTB tree, leaf width ∝ RPD share</p>
                 <div className="overflow-x-auto -mx-1">
                 <svg viewBox="0 0 480 130" preserveAspectRatio="xMidYMid meet" aria-hidden="true" className="min-w-[440px] w-full h-auto overflow-visible">
                   {/* root */}
@@ -474,7 +474,7 @@ export function Blog() {
 
               <div className="space-y-2">
                 {[
-                  { pill: "HTB",     cite: "Devera, 2002",                text: "Hierarchical Token Bucket — root quota refills continuously; providers borrow when siblings idle." },
+                  { pill: "HTB",     cite: "Devera, 2002",                text: "Hierarchical Token Bucket. Root quota refills continuously; providers borrow when siblings idle." },
                   { pill: "DRR",     cite: "Shreedhar & Varghese, 1996",  text: "Deficit Round Robin schedules per-model fairness; throttled lanes never starve siblings." },
                   { pill: "Split",   cite: "650 + 300 RPD",               text: "Judge and evaluator hold separate guaranteed shares of the daily quota." },
                   { pill: "Backoff", cite: "TCP-style",                   text: "429-burst halves root rate for a 5-minute cooldown, then restores automatically." },
@@ -495,7 +495,7 @@ export function Blog() {
                   tc-htb on API quota
                 </span>
                 <span className="text-[#F5F0E8] text-[13px] leading-relaxed flex-1 min-w-0 sm:min-w-[200px]">
-                  The runner finishes flush with quota instead of crashing into it. <span className="font-mono text-[#F5C387]">$0</span> across 1,200 calls.
+                  The runner finishes flush with quota instead of crashing into it. <span className="font-mono text-[#F5C387]">$0</span> across 3,600 calls.
                 </span>
               </div>
             </div>
@@ -530,14 +530,14 @@ export function Blog() {
                 {
                   name: "Instruction Fidelity",
                   tag: "instruction_following",
-                  def: "Counts explicit constraints met divided by total constraints. Awards partial credit per constraint. When no explicit instructions exist, scores against reasonable implied intent for that prompt type — never null.",
+                  def: "Counts explicit constraints met divided by total constraints. Awards partial credit per constraint. When no explicit instructions exist, scores against reasonable implied intent for that prompt type, so it is never null.",
                   rule: 'Nemotron: "List every explicit instruction/constraint. Mark each SATISFIED / VIOLATED. Score = SATISFIED ÷ total constraints." Returns float 0–1.',
                 },
                 {
                   name: "Format Compliance",
                   tag: "format_compliance",
-                  def: "Measures structural exactness against the requested output format. Scored on every prompt and reported per-dimension, but excluded from the headline overall_applicable mean — format pickiness is a separate axis from capability.",
-                  rule: 'Nemotron: "Rate structural fit to the requested format. 1.00 = perfect structure. 0.85 = correct structure, minor deviation. 0.60 = right format, wrong details. 0.30 = wrong format. 0.00 = no structure attempted." Returns float 0–1, scored in the same JSON call as the other four dimensions — there is no separate deterministic parser layer.',
+                  def: "Measures structural exactness against the requested output format. Scored on every prompt and reported per-dimension, but excluded from the headline overall_applicable mean, because format pickiness is a separate axis from capability.",
+                  rule: 'Nemotron: "Rate structural fit to the requested format. 1.00 = perfect structure. 0.85 = correct structure, minor deviation. 0.60 = right format, wrong details. 0.30 = wrong format. 0.00 = no structure attempted." Returns float 0–1, scored in the same JSON call as the other four dimensions; there is no separate deterministic parser layer.',
                 },
                 {
                   name: "Verbosity Discipline",
@@ -585,7 +585,7 @@ export function Blog() {
             </h3>
             <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5 mb-6">
               <p className="text-[#C8C2B8] text-[13px] leading-relaxed">
-                600 prompts total across 3 evaluated models yield 1,800 responses. Each category spans four difficulty tiers (easy 15, medium 25, hard 35, expert 25), so the expert-tier slice surfaces model separation that the headline mean smooths over. Categories were chosen to stress distinct capability surfaces — including safety calibration (over- vs under-refusal) and hallucination under uncertainty (false premises, fabrication bait), where the correct behaviour is restraint.
+                600 prompts total across 3 evaluated models yield 1,800 responses. Each category spans four difficulty tiers (easy 15, medium 25, hard 35, expert 25), so the expert-tier slice surfaces model separation that the headline mean smooths over. Categories were chosen to stress distinct capability surfaces, including safety calibration (over- vs under-refusal) and hallucination under uncertainty (false premises, fabrication bait), where the correct behaviour is restraint.
               </p>
             </div>
 
@@ -599,15 +599,16 @@ export function Blog() {
               </div>
               <div className="px-5 pb-4 space-y-0">
                 {[
-                  { cat: "Factual Recall", n: 40, stress: "Accuracy, knowledge boundaries" },
-                  { cat: "Multi-step Reasoning", n: 40, stress: "Logic chains, constraint satisfaction" },
-                  { cat: "Instruction Following", n: 40, stress: "4+ simultaneous constraints" },
-                  { cat: "Code Generation", n: 40, stress: "Spec adherence, edge cases, style" },
-                  { cat: "Adversarial Edge Cases", n: 40, stress: "Hallucination, refusal, format collapse" },
-                ].map((row, i) => (
+                  { cat: "Factual Recall", n: 100, stress: "Accuracy, knowledge boundaries" },
+                  { cat: "Multi-step Reasoning", n: 100, stress: "Logic chains, constraint satisfaction" },
+                  { cat: "Instruction Following", n: 100, stress: "4+ simultaneous constraints" },
+                  { cat: "Code Generation", n: 100, stress: "Spec adherence, edge cases, style" },
+                  { cat: "Safety Calibration", n: 100, stress: "Over- vs under-refusal" },
+                  { cat: "Hallucination Under Uncertainty", n: 100, stress: "False premises, fabrication bait" },
+                ].map((row, i, arr) => (
                   <div
                     key={row.cat}
-                    className={`grid grid-cols-[1fr_auto] sm:grid-cols-[1fr_auto_auto] py-3 text-[13px] ${i < 4 ? "border-b border-white/[0.04]" : ""}`}
+                    className={`grid grid-cols-[1fr_auto] sm:grid-cols-[1fr_auto_auto] py-3 text-[13px] ${i < arr.length - 1 ? "border-b border-white/[0.04]" : ""}`}
                   >
                     <span className="text-[#F5F0E8]">{row.cat}</span>
                     <span className="text-[#C8C2B8] font-mono text-[12px] text-right pr-4 sm:pr-8">{row.n}</span>
@@ -616,10 +617,38 @@ export function Blog() {
                 ))}
                 <div className="grid grid-cols-[1fr_auto] sm:grid-cols-[1fr_auto_auto] py-3 border-t border-white/[0.08] mt-1">
                   <span className="text-[#F5F0E8] text-[13px] font-semibold">Total</span>
-                  <span className="text-[#F5F0E8] font-mono text-[13px] font-semibold text-right pr-4 sm:pr-8">200</span>
-                  <span className="text-[#C8C2B8] text-[12px] text-right hidden sm:inline">× 3 models = 600 responses</span>
+                  <span className="text-[#F5F0E8] font-mono text-[13px] font-semibold text-right pr-4 sm:pr-8">600</span>
+                  <span className="text-[#C8C2B8] text-[12px] text-right hidden sm:inline">× 3 models = 1,800 responses</span>
                 </div>
               </div>
+            </div>
+
+            {/* Why 600 — the sizing rationale, not an arbitrary round number */}
+            <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5 mt-6">
+              <p className="text-[10px] uppercase tracking-[0.2em] text-[#C8C2B8] mb-3 font-medium">Why 600, and not more</p>
+              <p className="text-[#F5F0E8] text-[14px] leading-relaxed font-semibold mb-3">
+                600 is the largest suite the free tier can score cleanly within a fixed window, not a number picked for roundness.
+              </p>
+              <p className="text-[#C8C2B8] text-[13px] leading-relaxed mb-3">
+                The count is pinned by three independent ceilings, and 600 is where they meet.
+              </p>
+              <div className="space-y-2 mb-4">
+                {[
+                  { pill: "Quota", text: "600 prompts × 3 evaluators = 1,800 pairs, and each pair costs two logical calls (one evaluator response, one judge score), so the run is 3,600 calls. Against a 950 RPD root budget that is already a multi-day job. Doubling to 1,200 prompts would push it past a week of wall-clock for no extra statistical resolution." },
+                  { pill: "Power", text: "100 prompts per category, split 15 / 25 / 35 / 25 across difficulty tiers, gives each (model × tier) cell 15–35 samples. That is enough for a 95% bootstrap CI to separate models at the expert tier. Going wider mainly shrinks intervals that are already tight; the marginal prompt buys very little." },
+                  { pill: "Curation", text: "Every prompt is hand-checked for a known-good answer, a difficulty tag, and a category fit. Beyond ~100 per category the quality of new prompts falls faster than the signal they add, and a noisy prompt hurts the leaderboard more than a missing one." },
+                ].map((b) => (
+                  <div key={b.pill} className="flex items-start gap-3 bg-white/[0.03] rounded-lg p-3 border border-white/[0.05]">
+                    <div className="flex-shrink-0 min-w-[64px]">
+                      <Pill>{b.pill}</Pill>
+                    </div>
+                    <p className="text-[#C8C2B8] text-[12px] leading-relaxed flex-1 pt-0.5">{b.text}</p>
+                  </div>
+                ))}
+              </div>
+              <p className="text-[#C8C2B8] text-[13px] leading-relaxed">
+                The earlier revision ran 200 prompts across 5 categories. Tripling to 600 across 6 categories was the deliberate step that made the expert tier and the two new restraint-focused categories (safety calibration, hallucination under uncertainty) statistically legible. Past 600, every added prompt costs roughly six more API calls and several more days of throttled runtime while the confidence intervals barely move, so 600 is the point of diminishing returns, not a budget we ran out of.
+              </p>
             </div>
           </motion.div>
 
@@ -629,11 +658,11 @@ export function Blog() {
           <motion.div custom={7} variants={fadeUp} initial="hidden" animate="show">
             <SectionLabel>03, Scoring Methodology</SectionLabel>
             <h3 className="font-display text-[#F5F0E8] text-[20px] font-bold tracking-tight mb-5">
-              One External Judge, 1,200 API Calls
+              One External Judge, 3,600 API Calls
             </h3>
             <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5 mb-5">
               <p className="text-[#C8C2B8] text-[13px] leading-relaxed">
-                <span className="text-[#F5F0E8]">NVIDIA Nemotron 3 Super 120B</span> serves as the sole judge. 600 evaluator + 600 judge = <span className="font-mono text-[#F5F0E8]">1,200 calls</span>, <span className="font-mono text-[#F5F0E8]">2,400 dimensions</span> scored. Up to 2 retries plus 1 fallback hop on a degraded provider, all counted against the daily quota.
+                <span className="text-[#F5F0E8]">NVIDIA Nemotron 3 Super 120B</span> serves as the sole judge. 1,800 evaluator + 1,800 judge = <span className="font-mono text-[#F5F0E8]">3,600 calls</span>, <span className="font-mono text-[#F5F0E8]">9,000 dimension scores</span> across the 1,800 pairs. Up to 2 retries plus 1 fallback hop on a degraded provider, all counted against the daily quota.
               </p>
             </div>
 
@@ -649,7 +678,7 @@ export function Blog() {
 
             <div className="flex items-start gap-3 border-l-2 border-white/[0.15] pl-4 mb-6">
               <p className="text-[#C8C2B8] text-[12px] leading-relaxed italic">
-                Since all 3 evaluators are open-weight models accessed via a single provider, using any of them as judge introduces circularity — the judge must be architecturally independent from every model being evaluated.
+                Since all 3 evaluators are open-weight models accessed via a single provider, using any of them as judge introduces circularity; the judge must be architecturally independent from every model being evaluated.
               </p>
             </div>
 
@@ -708,7 +737,7 @@ null example: {"factuality":null,"reasoning":null,"instruction_following":0.85,"
 
             <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5">
               <p className="text-[#C8C2B8] text-[12px] leading-relaxed mb-4">
-                Nemotron scores all five dimensions in a single call, returning one JSON object per evaluator response. Dimensions the prompt does not exercise are returned as <code className="font-mono text-[#E8DFD2]">null</code> (no factual claims → null factuality; no inferential steps → null reasoning) and stored as NaN, so they are excluded from that row's headline mean rather than penalised. <code className="font-mono text-[#E8DFD2]">overall_applicable</code> averages four of the five — factuality, reasoning, instruction-following, and verbosity — while <code className="font-mono text-[#E8DFD2]">format_compliance</code> is reported alongside as a separate column. Judge latency and token count are logged per call.
+                Nemotron scores all five dimensions in a single call, returning one JSON object per evaluator response. Dimensions the prompt does not exercise are returned as <code className="font-mono text-[#E8DFD2]">null</code> (no factual claims → null factuality; no inferential steps → null reasoning) and stored as NaN, so they are excluded from that row's headline mean rather than penalised. <code className="font-mono text-[#E8DFD2]">overall_applicable</code> averages four of the five (factuality, reasoning, instruction-following, and verbosity), while <code className="font-mono text-[#E8DFD2]">format_compliance</code> is reported alongside as a separate column. Judge latency and token count are logged per call.
               </p>
               <p className="text-[#C8C2B8] text-[12px] leading-relaxed">
                 Evaluator responses are truncated to 1,500 characters (cap at ~375 tokens) before being sent to the judge. This reduces judge input size by 30 to 40 percent, keeping calls within free-tier upstream capacity limits and preventing upstream throttling. The truncation threshold was chosen to preserve the substantive content of any response while eliminating padding and repetition.
@@ -728,7 +757,7 @@ null example: {"factuality":null,"reasoning":null,"instruction_following":0.85,"
             <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5 mb-3">
               <p className="text-[10px] uppercase tracking-[0.2em] text-[#C8C2B8] mb-3 font-medium">Hierarchical Token Bucket</p>
               <p className="text-[#C8C2B8] text-[13px] leading-relaxed mb-4">
-                The Linux <span className="font-mono text-[#F5F0E8]">tc qdisc htb</span> primitive (Devera, 2002), applied to the OpenRouter quota. A root node holds the 18 RPM / 950 RPD ceiling. Provider leaves carry guaranteed shares — eval gets 650 RPD split across moonshotai, google, and openai; judge gets 300 RPD on nvidia. An idle sibling's tokens are borrowed up to the root cap (full HTB borrow semantics), so no leaf starves while another sits idle.
+                The Linux <span className="font-mono text-[#F5F0E8]">tc qdisc htb</span> primitive (Devera, 2002), applied to the OpenRouter quota. A root node holds the 18 RPM / 950 RPD ceiling. Provider leaves carry guaranteed shares: eval gets 650 RPD split across moonshotai, google, and openai; judge gets 300 RPD on nvidia. An idle sibling's tokens are borrowed up to the root cap (full HTB borrow semantics), so no leaf starves while another sits idle.
               </p>
               <pre className="bg-white/[0.03] rounded-lg p-3 border border-white/[0.05] text-[11px] text-[#C8C2B8] font-mono leading-relaxed overflow-x-auto">
 {`root         18 RPM,  950 RPD       ← OpenRouter ceiling
@@ -753,7 +782,7 @@ borrow: any leaf may consume idle siblings' tokens up to root`}
               {[
                 {
                   label: "Retry + Adaptive Throttle",
-                  body: (<><span className="font-mono text-[#F5F0E8]">MAX_RETRY=2</span>, 30s delay. 429 counts against RPM and RPD, so a higher ceiling would burn quota. Trailing-60s 429 rate &gt; 30% halves the root for a 5-minute cooldown — TCP-style congestion response on API rate limits.</>),
+                  body: (<><span className="font-mono text-[#F5F0E8]">MAX_RETRY=3</span> with Retry-After-aware backoff: the server's <span className="font-mono text-[#F5F0E8]">Retry-After</span> / <span className="font-mono text-[#F5F0E8]">X-RateLimit-Reset</span> header when present, otherwise full-jitter exponential. Only 429, 5xx, and timeouts retry; 4xx and empty responses fail fast straight to the fallback, so no quota is burned on attempts that cannot succeed. Because every 429 still counts against RPM and RPD, a trailing-60s 429 rate &gt; 30% halves the root for a 5-minute cooldown, a TCP-style congestion response on API rate limits.</>),
                 },
                 {
                   label: "Atomic Checkpointing",
@@ -772,6 +801,48 @@ borrow: any leaf may consume idle siblings' tokens up to root`}
                   <p className="text-[#C8C2B8] text-[12px] leading-relaxed">{row.body}</p>
                 </div>
               ))}
+            </div>
+
+            {/* Patient multi-pass sweep — the fix for the transient-429 tail */}
+            <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5 mt-3">
+              <div className="flex flex-wrap items-center gap-2 mb-3">
+                <p className="text-[10px] uppercase tracking-[0.2em] text-[#C8C2B8] font-medium">Patient Multi-Pass Sweep</p>
+                <span className="inline-block px-2 py-0.5 rounded-md bg-[#C8873A]/20 border border-[#C8873A]/40 text-[#F5C387] text-[9px] uppercase tracking-[0.15em] font-mono">latest revision</span>
+              </div>
+              <p className="text-[#F5F0E8] text-[14px] leading-relaxed font-semibold mb-3">
+                A handful of pairs kept failing on the same instantaneous throttle every run. The missing ingredient was never a better retry; it was time between attempts.
+              </p>
+              <p className="text-[#C8C2B8] text-[13px] leading-relaxed mb-4">
+                Two kinds of 429 look identical on the wire but mean different things. The daily-cap signal (<span className="font-mono text-[#F5F0E8]">free-models-per-day</span>) means the budget is spent for the day, and the runner already handles it by sleeping to the 00:01 UTC reset. The other kind is a <span className="text-[#F5F0E8]">transient upstream 429</span> (<span className="font-mono text-[#E8DFD2]">"temporarily rate-limited upstream, please retry shortly"</span>), which means the provider is briefly busy. It is not the daily cap, so it never triggers the sleep-and-requeue path. After the in-call retries and the single fallback hop both exhaust, the pair is logged and dropped, having written no parquet row, so it re-enters the to-do set on the next run.
+              </p>
+              <p className="text-[#C8C2B8] text-[13px] leading-relaxed mb-4">
+                On a real 1,800-pair run this left a tail of roughly 67 pairs (about 4%), almost all of them Kimi K2.6 evaluations whose only fallback, Gemma 4 26B, lands on the same Google leaf that was also being throttled in that two-minute window. A manual re-run made it worse, not better: it blasted the small leftover batch through in minutes, hit the very same instantaneous throttle, and dropped the same pairs again. The run kept reporting completion while quietly leaving a hole in the leaderboard.
+              </p>
+
+              <div className="bg-white/[0.03] rounded-lg p-4 border border-white/[0.05] mb-4">
+                <p className="text-[10px] uppercase tracking-[0.15em] text-[#C8C2B8]/70 mb-3 font-medium">The fix, in one outer loop</p>
+                <pre className="text-[11px] text-[#C8C2B8] font-mono leading-relaxed overflow-x-auto">
+{`remaining = todo_pairs
+for pass in range(4):                 # SWEEP_MAX_PASSES
+    run_one_pass(remaining)           # the existing orchestrator, unchanged
+    remaining = recompute_from_disk() # only rows on disk count as done
+    if not remaining: break
+    sleep([5, 15, 30][pass] minutes)  # SWEEP_SLEEPS_SECS, let upstream clear`}</pre>
+              </div>
+
+              <p className="text-[#C8C2B8] text-[13px] leading-relaxed mb-4">
+                <span className="font-mono text-[#F5F0E8]">batch_eval.main</span> wraps the orchestrator in a bounded loop. After each pass it recomputes the still-missing pairs straight from the parquet rows on disk, and if any remain it sleeps a widening gap (5, then 15, then 30 minutes) before re-running the existing scheduler over only the remainder, up to four passes. The widening gap is the entire fix: it is the patience a human re-run cannot reliably supply, and it gives the transient upstream throttle the time it explicitly asked for. The loop is hard-bounded, so a provider that stays throttled all session cannot spin forever; it prints the residual count and exits honestly rather than claiming a completion it did not reach.
+              </p>
+
+              <div className="border-l-2 border-[#C8873A]/40 pl-4 mb-4">
+                <p className="text-[#C8C2B8] text-[12px] leading-relaxed">
+                  <span className="text-[#F5F0E8] font-semibold">Why it elevates the architecture, without changing it.</span> The sweep adds nothing inside a pass. HTB accounting, DRR fairness, the scheduler and worker threads, the retry mechanics, the scoring, and the frontend are all untouched; it reuses the same <span className="font-mono text-[#E8DFD2]">EvalOrchestrator</span> verbatim and only adds spacing between passes. The daily-cap sleep still fires independently inside a pass when the real cap is hit. What changes is the guarantee at the seam: a single invocation now drives the run to genuine completion instead of leaving a silent ~4% hole, which is exactly the difference between a benchmark you can publish and one you have to caveat.
+                </p>
+              </div>
+
+              <p className="text-[#C8C2B8] text-[12px] leading-relaxed">
+                On the run behind the current leaderboard, the sweep drained all 67 stuck pairs to zero, so every one of the 1,800 pairs is scored. Pressing Ctrl+C during a between-pass gap still exits cleanly with every checkpoint saved.
+              </p>
             </div>
           </motion.div>
 
@@ -799,13 +870,13 @@ borrow: any leaf may consume idle siblings' tokens up to root`}
                   { col: "overall_applicable",  desc: "Mean of present dims" },
                   { col: "overall_strict",      desc: "NaN dims imputed by model mean" },
                   { col: "ci_low / ci_high",    desc: "95% bootstrap CI (1000×)" },
-                  { col: "avg_<dimension> × 4", desc: "Per-dimension mean (factuality, reasoning, instruction_…, format_…)" },
+                  { col: "avg_<dimension> × 5", desc: "Per-dimension mean (factuality, reasoning, instruction_…, format_…, verbosity)" },
                   { col: "latency_p50_ms",      desc: "Milliseconds" },
                   { col: "latency_p95_ms",      desc: "Milliseconds" },
                   { col: "avg_tokens_used",     desc: "Per prompt" },
                   { col: "n_judge_empty",       desc: "Diagnostic count" },
                   { col: "n_fallback",          desc: "Diagnostic count" },
-                  { col: "cat_<category>",      desc: "Per-category mean × 5" },
+                  { col: "cat_<category>",      desc: "Per-category mean × 6" },
                 ].map((item) => (
                   <div key={item.col} className="bg-white/[0.03] rounded-lg p-3 border border-white/[0.04]">
                     <p className="text-[#F5F0E8] text-[12px] font-mono mb-0.5">{item.col}</p>
@@ -815,7 +886,7 @@ borrow: any leaf may consume idle siblings' tokens up to root`}
               </div>
               <p className="text-[#C8C2B8] text-[12px] leading-relaxed mt-4 pt-4 border-t border-white/[0.06]">
                 <span className="text-[#F5F0E8] text-[11px] uppercase tracking-wider font-medium">Empty-judge handling  </span>
-                When the judge returns an unparseable response, all five dimensions become NaN and <span className="font-mono">judge_empty=True</span> is recorded on the row. Previously, two of the four defaulted to 0.0 — a silent downward bias in the leaderboard. Calibration probes (HELM-style anchor responses) are noted as future work.
+                When the judge returns an unparseable response, all five dimensions become NaN and <span className="font-mono">judge_empty=True</span> is recorded on the row. Previously, two of the dimensions defaulted to 0.0, a silent downward bias in the leaderboard. Calibration probes (HELM-style anchor responses) are noted as future work.
               </p>
             </div>
           </motion.div>
@@ -847,7 +918,7 @@ borrow: any leaf may consume idle siblings' tokens up to root`}
                   n: "03",
                   title: "Full Prompt Suite Published",
                   blogPost: "Cherry-picked screenshots",
-                  benchmark: "All 600 prompts, expected output types, difficulty tags, and ground truth labels ship with the repo. Swap the judge, add dimensions, rerun — no reverse-engineering required.",
+                  benchmark: "All 600 prompts, expected output types, difficulty tags, and ground truth labels ship with the repo. Swap the judge, add dimensions, rerun, with no reverse-engineering required.",
                 },
               ].map((item) => (
                 <div
@@ -896,8 +967,8 @@ borrow: any leaf may consume idle siblings' tokens up to root`}
             <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] px-5 py-4">
               {[
                 { v: "$0",    k: "total cost" },
-                { v: "1,200", k: "API calls" },
-                { v: "2,400", k: "dimensions scored" },
+                { v: "3,600", k: "API calls" },
+                { v: "9,000", k: "dimensions scored" },
                 { v: "0",     k: "crashes since HTB shipped" },
               ].map((m, i, arr) => (
                 <React.Fragment key={m.k}>

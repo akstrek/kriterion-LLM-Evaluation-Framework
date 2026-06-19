@@ -1,0 +1,13 @@
+model,difficulty,overall_applicable,n_prompts,avg_factuality,avg_reasoning,avg_instruction_following,avg_format_compliance,avg_verbosity
+google/gemma-4-31b-it:free,easy,0.9534,90,0.9515,0.8457,0.9594,0.9947,0.9856
+google/gemma-4-31b-it:free,medium,0.9474,150,0.9736,0.844,0.9353,0.9851,0.9863
+google/gemma-4-31b-it:free,hard,0.9055,210,0.8848,0.7871,0.8831,0.964,0.9789
+google/gemma-4-31b-it:free,expert,0.8548,150,0.8182,0.7237,0.8305,0.9178,0.9654
+moonshotai/kimi-k2.6:free,easy,0.9553,90,0.9864,0.8674,0.9446,0.9798,0.9843
+moonshotai/kimi-k2.6:free,medium,0.9613,150,0.9855,0.8602,0.9653,0.9818,0.989
+moonshotai/kimi-k2.6:free,hard,0.9341,210,0.9503,0.8529,0.9181,0.9687,0.9791
+moonshotai/kimi-k2.6:free,expert,0.9002,150,0.9211,0.8053,0.8648,0.9217,0.9667
+openai/gpt-oss-120b:free,easy,0.9441,90,0.9591,0.8457,0.919,0.9678,0.9939
+openai/gpt-oss-120b:free,medium,0.9242,150,0.9541,0.8195,0.9004,0.9693,0.9787
+openai/gpt-oss-120b:free,hard,0.9063,210,0.8886,0.8078,0.894,0.9521,0.9774
+openai/gpt-oss-120b:free,expert,0.858,150,0.8431,0.7383,0.8309,0.8958,0.951

@@ -15,13 +15,13 @@
 ![OpenRouter](https://img.shields.io/badge/OpenRouter-free_tier-6E57FF?style=flat-square)
 ![License](https://img.shields.io/badge/License-unspecified-lightgrey?style=flat-square)
 
-**3 evaluator models · 1 judge · 200 prompts · 4 scoring dimensions · 0 dollars spent**
+**3 evaluator models · 1 judge · 600 prompts · 1,800 pairs · 5 scoring dimensions · 0 dollars spent**
 
 ---
 
 ## What This Is
 
-Kriterion mirrors the kind of systematic, auto-scored evaluation work done by evals teams at frontier labs — but reproduced end-to-end on free-tier infrastructure. It scores three open-weight evaluators (Moonshot Kimi K2.6, Google Gemma 4 31B IT, OpenAI GPT-OSS 120B) against 200 prompts across 5 categories, with NVIDIA Nemotron 3 Super 120B as an architecturally independent judge. Every score and chart is generated from real eval runs, not synthetic data. The most differentiating decision is in the runtime: a Hierarchical Token Bucket scheduler treats multi-provider rate limits as a bandwidth-shaping problem, so the entire pipeline self-paces through quota exhaustion without any OS-level scheduling.
+Kriterion mirrors the kind of systematic, auto-scored evaluation work done by evals teams at frontier labs, reproduced end-to-end on free-tier infrastructure. It scores three open-weight evaluators (Moonshot Kimi K2.6, Google Gemma 4 31B IT, OpenAI GPT-OSS 120B) against 600 prompts across 6 categories, with NVIDIA Nemotron 3 Super 120B as an architecturally independent judge. That is 600 prompts × 3 evaluators = 1,800 evaluated pairs, each tagged easy / medium / hard / expert so model separation is visible at the top tier. Every score and chart is generated from real eval runs, not synthetic data. The most differentiating decision is in the runtime: a Hierarchical Token Bucket scheduler treats multi-provider rate limits as a bandwidth-shaping problem, so the entire pipeline self-paces through quota exhaustion without any OS-level scheduling, and a bounded patient multi-pass sweep drives the transient-429 tail to zero without manual re-runs.
 
 Architecture deep dive → [Blog](https://kriterion-eight.vercel.app/blog) · Scoring methodology → [Methods](https://kriterion-eight.vercel.app/methods)
 
@@ -32,7 +32,7 @@ Architecture deep dive → [Blog](https://kriterion-eight.vercel.app/blog) · Sc
 ### ⚡ Eval Pipeline (Backend)
 
 ```
-prompts/prompt_suite.json   (200 prompts × 5 categories)
+prompts/prompt_suite.json   (600 prompts × 6 categories, difficulty-tagged)
             │
             ▼
        batch_eval.py ──── HTB Scheduler   root: 0.3 req/s · 950 RPD
@@ -40,6 +40,7 @@ prompts/prompt_suite.json   (200 prompts × 5 categories)
             │             DRR Pair         ├── google   325 RPD
             │             Selector         ├── moonshot 163 RPD
             │                  │           └── openai   163 RPD
+            │             Patient multi-pass sweep (transient-429 tail → 0)
             ▼                  ▼
        evaluator.py ◄──── config/llm.py    fallback routing per provider
        (3 workers)        adaptive throttle (halves rate on 429>30%)
@@ -51,7 +52,7 @@ prompts/prompt_suite.json   (200 prompts × 5 categories)
        data/rows/*.parquet   (atomic tmp → fsync → os.replace per row)
             │
             ▼
-       leaderboard.py ──── bootstrap CI · two-score aggregation
+       leaderboard.py ──── bootstrap CI · two-score aggregation · difficulty CSV
             │
             ▼
        public/data/leaderboard.csv ──► React dashboard ──► Vercel
@@ -66,6 +67,8 @@ prompts/prompt_suite.json   (200 prompts × 5 categories)
 | Two-score aggregation | `overall_applicable` + `overall_strict` | Zero free parameters. Fully reproducible from parquet alone. |
 | Fallback routing | Primary → fallback per provider, debits fallback's HTB leaf | Resilience without violating OpenRouter TOS or burning credits. |
 | Adaptive throttle | Halve root rate to 0.15/s for 300s when trailing 429-rate > 30% | Backs off automatically when a provider degrades, restores on cooldown. |
+| Retry-After-aware backoff | Honor server `Retry-After` / `X-RateLimit-Reset`, else full-jitter exponential; only 429 / 5xx / timeouts retried | Wastes no daily-quota units on un-retryable 4xx; spreads worker retries so they don't re-sync. |
+| Patient multi-pass sweep | Bounded outer loop in `batch_eval.main`: re-run remaining pairs with widening gaps (5 / 15 / 30 min, 4 passes) | Transient upstream 429s need *time between attempts*, not just a retry; this drains the ~4% tail without manual re-runs. |
 
 Full architecture story → [Blog](https://kriterion-eight.vercel.app/blog) · Infrastructure details → [Methods](https://kriterion-eight.vercel.app/methods)
 
@@ -104,16 +107,17 @@ Model selection rationale → [Blog](https://kriterion-eight.vercel.app/blog)
 
 ## 🎯 Scoring
 
-| Dimension | Measures | Null when |
-|:---|:---|:---|
-| Factuality | Claim accuracy against ground knowledge | No factual claims in prompt |
-| Reasoning | Inferential validity + depth | No reasoning required |
-| Instruction Following | Constraint satisfaction (met / total) | Never null |
-| Format Compliance | Structural exactness vs. requested format | Never null |
+| Dimension | Measures | In headline? | Null when |
+|:---|:---|:---:|:---|
+| Factuality | Claim accuracy against ground knowledge | ✓ | No factual claims in prompt |
+| Reasoning | Inferential validity + depth | ✓ | No reasoning required |
+| Instruction Following | Constraint satisfaction (met / total) | ✓ | Never null |
+| Verbosity | Conciseness relative to task | ✓ | Never null |
+| Format Compliance | Structural exactness vs. requested format | ✗ (reported only) | Never null |
 
-Scored 0.00–1.00 by the judge using calibrated anchor points; most responses land in 0.40–0.85. Full rubric → [Methods](https://kriterion-eight.vercel.app/methods).
+Scored 0.00–1.00 by the judge using calibrated anchor points; most responses land in 0.40–0.85. The headline mean averages the four ✓ dimensions; `format_compliance` is scored on every response and reported as its own column, but excluded from the headline because structural pickiness is a separate axis from capability. Full rubric → [Methods](https://kriterion-eight.vercel.app/methods).
 
-Aggregation: `overall_applicable` (per-row mean over non-null dims, then per-model mean) and `overall_strict` (per-row NaN-impute with model's own dim-mean, then mean). Bootstrap 95% CIs: 1,000 resamples, seed 42, pure numpy.
+Aggregation: `overall_applicable` (per-row mean over non-null headline dims, then per-model mean) and `overall_strict` (per-row NaN-impute with model's own dim-mean, then mean). Bootstrap 95% CIs: 1,000 resamples, seed 42, pure numpy. A second CSV, `leaderboard_by_difficulty.csv`, reports the same headline per `(model × difficulty)` tier.
 
 <details>
 <summary>Judge system prompt (verbatim, from <code>config/llm.py</code>)</summary>
@@ -124,9 +128,10 @@ factuality: claim accuracy. 1.00=every claim verifiable. 0.85=minor imprecision.
 reasoning: inferential validity AND depth. 1.00=correct + insightful. 0.85=correct but shallow. 0.60=mostly correct, one weak step. 0.30=flawed logic. 0.00=incoherent. null if no reasoning required.
 instruction_following: constraint satisfaction. Count explicit constraints (length, format, scope, exclusions). Score = constraints_met / constraints_total. Partial credit per constraint. Score implied intent if none explicit.
 format_compliance: structural exactness. 1.00=perfect structure. 0.85=correct structure, minor deviation. 0.60=right format, wrong details. 0.30=wrong format. 0.00=no structure attempted.
-Penalize: hedging, padding, unnecessary preamble, repetition. Reward: precision, completeness within minimal tokens.
-Return JSON only: {"factuality":0.00,"reasoning":0.00,"instruction_following":0.00,"format_compliance":0.00}
-null example: {"factuality":null,"reasoning":null,"instruction_following":0.85,"format_compliance":0.92}
+verbosity: conciseness relative to task. 1.00=optimal length, no padding. 0.85=slightly verbose. 0.60=noticeable padding or hedging. 0.30=significant bloat. 0.00=severe rambling. Penalize unnecessary preamble, repetition, hedging. Reward precision within minimal tokens.
+When the prompt contains a false premise or unanswerable request, correctly identifying this and declining to fabricate is the high-scoring response; do not penalize absence of factual claims in that case.
+Return JSON only: {"factuality":0.00,"reasoning":0.00,"instruction_following":0.00,"format_compliance":0.00,"verbosity":0.00}
+null example: {"factuality":null,"reasoning":null,"instruction_following":0.85,"format_compliance":0.92,"verbosity":0.78}
 ```
 
 </details>
@@ -149,13 +154,12 @@ Create `.env` at the repo root with `OPENROUTER_API_KEY=your_key_here`, then:
 
 ```powershell
 python generate_prompts.py                              # (1) skip if prompts/prompt_suite.json is committed
-python batch_eval.py                                    # (2) ~2 days at free-tier 950 RPD
-python leaderboard.py                                   # (3) aggregate to data/leaderboard.csv
-Copy-Item data\leaderboard.csv public\data\leaderboard.csv   # (4) publish to dashboard
-npm install; npm run dev                                # (5) dashboard at localhost:3000
+python batch_eval.py                                    # (2) ~4 days at free-tier 950 RPD
+python leaderboard.py                                   # (3) aggregate to data/leaderboard.csv (+ leaderboard_by_difficulty.csv, auto-mirrored to public/data/)
+npm install; npm run dev                                # (4) dashboard at localhost:3000
 ```
 
-> ℹ️ **Step 2 takes ~2 calendar days on free tier.** 1,200 API calls against a 950 RPD root budget. The runner sleeps in-process until 00:01 UTC when quota exhausts — no manual intervention after launch.
+> ℹ️ **Step 2 spans several calendar days on free tier.** 3,600 logical API calls (1,800 evaluator + 1,800 judge) against a 950 RPD root budget. The runner sleeps in-process until 00:01 UTC when the daily quota exhausts, then a bounded patient multi-pass sweep re-runs any pairs still stuck on transient upstream 429s with widening gaps, so a single invocation drives the run to completion with no manual intervention after launch. `leaderboard.py` auto-publishes both CSVs into `public/data/`, so no manual copy step is needed.
 
 ---
 

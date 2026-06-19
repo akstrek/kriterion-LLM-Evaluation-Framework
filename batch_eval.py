@@ -33,6 +33,7 @@ from config.llm import (
     EVALUATOR_MODELS,
     JUDGE_MODEL,
     OPENROUTER_API_KEY,
+    _interruptible_sleep,
     htb_status,
 )
 from config.scheduler import EvalOrchestrator
@@ -76,6 +77,18 @@ STATE_PATH        = os.path.join(DATA_DIR, "eval_state.json")
 FAILED_PATH       = os.path.join(DATA_DIR, "failed_calls.json")
 METADATA_PATH     = os.path.join(DATA_DIR, "eval_metadata.json")
 FINAL_CSV_PATH    = os.path.join(DATA_DIR, "eval_results.csv")
+
+# ── Patient multi-pass sweep ────────────────────────────────────────────────
+# Transient upstream 429s ("…temporarily rate-limited upstream. Please retry
+# shortly") survive the in-call retry budget and are dropped to failed_calls.json
+# without being requeued (only DailyQuotaExhausted gets the sleep-and-retry
+# path). A single immediate re-run hits the same instantaneous throttle. So
+# after a pass, if pairs are still un-evaluated, wait an increasing interval to
+# let the upstream throttle clear, then re-run the orchestrator over only the
+# remainder. Nothing inside the pass changes — this just adds spacing between
+# passes, which is the one thing a manual re-run lacks.
+SWEEP_MAX_PASSES  = 4                    # 1 initial pass + up to 3 retry sweeps
+SWEEP_SLEEPS_SECS = [300, 900, 1800]     # gaps before sweeps 2, 3, 4 (5m/15m/30m)
 
 
 # ── New parquet schema (existing rows are NOT migrated) ──────────────────────
@@ -228,13 +241,22 @@ def append_row_to_parquet(row: dict) -> None:
 
 
 def consolidate_rows_to_parquet() -> int:
-    """Concat all per-row parquet files into eval_results.parquet, filtering
-    out any rows whose model is no longer in EVALUATOR_MODELS so a roster
-    change between runs doesn't leak stale lanes into the leaderboard."""
+    """Rebuild eval_results.parquet from the per-row checkpoints in ROWS_DIR.
+
+    Each row file is the *latest* evaluation for its (prompt_id, model) pair
+    (`append_row_to_parquet` writes via `os.replace`, overwriting in place), so
+    the row directory is the single source of truth and naturally holds exactly
+    one row per pair. We therefore rebuild from ROWS_DIR alone and deliberately
+    do NOT re-read the existing eval_results.parquet — doing so re-appended every
+    prior pass/run's rows on each consolidation, growing the file without bound
+    (e.g. a 1,800-pair run ballooned to ~10,624 rows across four days, inflating
+    n_prompts and artificially tightening the bootstrap CIs). Rows whose model is
+    no longer in EVALUATOR_MODELS are filtered so a roster change between runs
+    doesn't leak stale lanes into the leaderboard. A defensive de-dup on
+    (prompt_id, model) keeps the last occurrence in case more than one row file
+    ever maps to the same pair."""
     active = pa.array(list(EVALUATOR_MODELS), type=pa.string())
     tables = []
-    if os.path.exists(PARQUET_PATH):
-        tables.append(pq.read_table(PARQUET_PATH))
     if os.path.isdir(ROWS_DIR):
         for fname in sorted(os.listdir(ROWS_DIR)):
             if fname.endswith(".parquet"):
@@ -244,12 +266,35 @@ def consolidate_rows_to_parquet() -> int:
     combined = pa.concat_tables(tables, promote_options="default")
     mask = pc.is_in(combined["model"], value_set=active)
     combined = combined.filter(mask)
+    combined = _dedup_latest_pair(combined)
     tmp = PARQUET_PATH + ".tmp"
     pq.write_table(combined, tmp)
     with open(tmp, "r+b") as f:
         os.fsync(f.fileno())
     os.replace(tmp, PARQUET_PATH)
     return combined.num_rows
+
+
+def _dedup_latest_pair(table: "pa.Table") -> "pa.Table":
+    """Keep the last row per (prompt_id, model), preserving input order.
+
+    Row files are unique per pair by construction, so this is a belt-and-braces
+    guard; it makes consolidation idempotent even if a stray duplicate row ever
+    reaches the table. Pure pyarrow — no pandas round-trip."""
+    n = table.num_rows
+    if n == 0:
+        return table
+    prompt_ids = table.column("prompt_id").to_pylist()
+    models = table.column("model").to_pylist()
+    # Walk forward recording the last index seen for each key, then take rows in
+    # ascending index order so the output keeps the table's original ordering.
+    last_index: dict[tuple[str, str], int] = {}
+    for i in range(n):
+        last_index[(prompt_ids[i], models[i])] = i
+    keep = sorted(last_index.values())
+    if len(keep) == n:
+        return table
+    return table.take(pa.array(keep, type=pa.int64()))
 
 
 # ── Failed calls log ──────────────────────────────────────────────────────────
@@ -650,9 +695,17 @@ def main() -> None:
             save_state(state)
         _print_resume_banner(state)
 
-    try:
-        with tqdm(total=len(todo_pairs), desc="Evaluating", unit="pair",
-                  bar_format=bar_fmt, dynamic_ncols=True) as pbar:
+    def run_one_pass(pairs: list, pass_idx: int):
+        """One full orchestrator pass over `pairs`. Reuses the existing
+        EvalOrchestrator + quota callbacks verbatim — the sweep adds nothing
+        inside a pass, only spacing between passes."""
+        nonlocal initial_completed
+        # Rebind the live-completed baseline + holder so the quota status box
+        # reports correct totals on a later sweep (new orch → stats.completed
+        # resets to 0 each pass).
+        initial_completed = len(load_completed_pairs())
+        with tqdm(total=len(pairs), desc=f"Evaluating (pass {pass_idx + 1})",
+                  unit="pair", bar_format=bar_fmt, dynamic_ncols=True) as pbar:
             orch = EvalOrchestrator(
                 EVALUATOR_MODELS,
                 make_process_pair(state, pbar),
@@ -660,12 +713,47 @@ def main() -> None:
                 on_quota_tick=on_quota_tick,
                 on_quota_resume=on_quota_resume,
             )
-            orch_holder.append(orch)
-            orch.enqueue_all(todo_pairs)
-            stats = orch.run()
+            orch_holder[:] = [orch]
+            orch.enqueue_all(pairs)
+            return orch.run()
+
+    remaining = todo_pairs
+    sweep_completed = sweep_failed = sweep_quota_sleeps = 0
+    try:
+        for pass_idx in range(SWEEP_MAX_PASSES):
+            stats = run_one_pass(remaining, pass_idx)
+            sweep_completed += stats.completed
+            sweep_failed += stats.failed
+            sweep_quota_sleeps += stats.quota_sleeps
+
+            # Only pairs that wrote a parquet row are truly done; transient-429
+            # failures left no row and stay in `remaining`.
+            done_now = load_completed_pairs()
+            remaining = [
+                (p, m) for (p, m) in remaining if (p["id"], m) not in done_now
+            ]
+            if not remaining or pass_idx == SWEEP_MAX_PASSES - 1:
+                break
+
+            delay = SWEEP_SLEEPS_SECS[min(pass_idx, len(SWEEP_SLEEPS_SECS) - 1)]
+            print(
+                f"\n  {len(remaining)} pair(s) still failing on transient 429 — "
+                f"sweep {pass_idx + 2}/{SWEEP_MAX_PASSES} in {delay // 60} min "
+                f"(letting upstream throttle clear)…",
+                flush=True,
+            )
+            _interruptible_sleep(delay)
     except KeyboardInterrupt:
         print("\n  Interrupted — checkpoints saved, re-run to resume.", flush=True)
         sys.exit(0)
+
+    if remaining:
+        print(
+            f"\n  {len(remaining)} pair(s) still un-evaluated after "
+            f"{SWEEP_MAX_PASSES} passes (persistent upstream throttle) — "
+            f"re-run later to retry.",
+            flush=True,
+        )
 
     final_set = load_completed_pairs()
     final_completed = len(completed_pairs) + sum(
@@ -681,9 +769,9 @@ def main() -> None:
         _print_completion_box(state, final_completed, total_pairs)
 
     print("\n── Run summary ──────────────────────────────────────────────────────")
-    print(f"  Completed:      {stats.completed}")
-    print(f"  Failed:         {stats.failed}")
-    print(f"  Quota sleeps:   {stats.quota_sleeps}")
+    print(f"  Completed:      {sweep_completed}")
+    print(f"  Failed:         {sweep_failed}")
+    print(f"  Quota sleeps:   {sweep_quota_sleeps}")
     print(f"  Total calls:    {state['total_calls']}")
     print(f"  Total failures: {state['total_failures']}")
     if os.path.exists(FINAL_CSV_PATH):
