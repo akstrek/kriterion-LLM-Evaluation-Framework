@@ -180,7 +180,7 @@ Loads `public/data/leaderboard.csv`. Falls back to a small embedded demo dataset
 
 - **Single judge model** — same-family scoring bias is possible (Zheng et al., 2023). No multi-judge ensemble yet.
 - **No human-rater validation sample** — inter-rater reliability with the judge is unknown.
-- **Response truncation** — evaluator responses are truncated to ~1,500 characters before judge scoring.
+- **Response truncation** — evaluator responses are truncated to ~1,500 characters before judge scoring. (fixed in pipeline v2 — cap raised to 4,000 chars with a recorded truncation flag; pending re-run)
 - **Free-tier variability** — provider availability and latency shift through the day; the adaptive throttle dampens but doesn't eliminate this.
 - **Gemma 4 31B dual role** — serves as Evaluator 2 *and* as fallback for Evaluator 3, creating single-provider risk if Google's free tier degrades.
 

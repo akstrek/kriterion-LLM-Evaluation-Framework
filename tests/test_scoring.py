@@ -55,6 +55,68 @@ def test_unparseable_judge_all_nan():
         assert math.isnan(scores[dim])
 
 
+def test_grounded_message_includes_reference_when_ground_truth_present():
+    """Reference line appears iff ground_truth is non-empty; Reference precedes Response."""
+    captured = {}
+
+    def _fake_call(model_id, messages, role, **_kw):
+        captured["user_msg"] = messages[1]["content"]
+        return CallResult(text="{}", latency_ms=1, tokens_used=1, model_used="judge-x")
+
+    with patch.object(evaluator, "call_model", side_effect=_fake_call):
+        scores = evaluator.score_response(
+            {"id": "FR_001", "prompt_text": "What is the atomic number of gold?",
+             "ground_truth": "Na"},
+            "resp",
+        )
+    msg = captured["user_msg"]
+    assert "Reference" in msg
+    assert msg.index("Reference") < msg.index("Response:")
+    assert msg.strip().endswith("Response: resp")
+    assert scores["gt_provided"] is True
+
+
+def test_grounded_message_omits_reference_when_ground_truth_absent_or_empty():
+    for prompt_obj in (
+        {"id": "X", "prompt_text": "Hi"},
+        {"id": "X", "prompt_text": "Hi", "ground_truth": ""},
+        {"id": "X", "prompt_text": "Hi", "ground_truth": "   "},
+    ):
+        captured = {}
+
+        def _fake_call(model_id, messages, role, **_kw):
+            captured["user_msg"] = messages[1]["content"]
+            return CallResult(text="{}", latency_ms=1, tokens_used=1, model_used="judge-x")
+
+        with patch.object(evaluator, "call_model", side_effect=_fake_call):
+            scores = evaluator.score_response(prompt_obj, "resp")
+        assert "Reference" not in captured["user_msg"]
+        assert scores["gt_provided"] is False
+
+
+def test_response_truncated_flag_and_named_constants():
+    long_response = "x" * (evaluator.JUDGE_RESPONSE_MAX_CHARS + 100)
+    captured = {}
+
+    def _fake_call(model_id, messages, role, **_kw):
+        captured["user_msg"] = messages[1]["content"]
+        return CallResult(text="{}", latency_ms=1, tokens_used=1, model_used="judge-x")
+
+    with patch.object(evaluator, "call_model", side_effect=_fake_call):
+        scores = evaluator.score_response({"id": "X", "prompt_text": "Hi"}, long_response)
+
+    assert scores["response_truncated"] is True
+    # The judge message's Response segment is capped at JUDGE_RESPONSE_MAX_CHARS,
+    # not the full over-length response.
+    response_segment = captured["user_msg"].split("Response: ", 1)[1]
+    assert len(response_segment) == evaluator.JUDGE_RESPONSE_MAX_CHARS
+
+    short_response = "y" * 10
+    with patch.object(evaluator, "call_model", side_effect=_fake_call):
+        scores_short = evaluator.score_response({"id": "X", "prompt_text": "Hi"}, short_response)
+    assert scores_short["response_truncated"] is False
+
+
 def test_score_response_parses_all_five_dims():
     fake = _judge_returning(
         '{"factuality": null, "reasoning": null, '

@@ -76,6 +76,14 @@ def load_results() -> pd.DataFrame:
     missing = required - set(df.columns)
     if missing:
         sys.exit(f"ERROR: eval_results.csv missing columns: {missing}")
+    if "rubric_version" in df.columns:
+        versions = df["rubric_version"].dropna().unique()
+        if len(versions) > 1:
+            sys.exit(
+                f"ERROR: eval_results.csv mixes rubric_version values {sorted(versions)} — "
+                "grounded (v2) and ungrounded (v1) factuality scores are not comparable. "
+                "Re-run against a single-version dataset."
+            )
     return df
 
 

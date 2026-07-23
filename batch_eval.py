@@ -33,6 +33,7 @@ from config.llm import (
     EVALUATOR_MODELS,
     JUDGE_MODEL,
     OPENROUTER_API_KEY,
+    RUBRIC_VERSION,
     _interruptible_sleep,
     htb_status,
 )
@@ -91,7 +92,14 @@ SWEEP_MAX_PASSES  = 4                    # 1 initial pass + up to 3 retry sweeps
 SWEEP_SLEEPS_SECS = [300, 900, 1800]     # gaps before sweeps 2, 3, 4 (5m/15m/30m)
 
 
-# ── New parquet schema (existing rows are NOT migrated) ──────────────────────
+# Response-text storage cap. Separate decision from evaluator.JUDGE_RESPONSE_MAX_CHARS
+# (judge-input truncation) — this one bounds what's persisted per row so one
+# adversarially-long completion can't balloon a row file. 20k chars covers every
+# real response seen so far.
+STORE_RESPONSE_MAX_CHARS = 20_000
+
+# ── Parquet schema v2 (existing v1 rows are NOT migrated — see the startup
+# guard in load_completed_pairs/consolidate_rows_to_parquet) ─────────────────
 _SCHEMA = pa.schema([
     pa.field("prompt_id",              pa.string()),
     pa.field("model",                  pa.string()),
@@ -113,6 +121,10 @@ _SCHEMA = pa.schema([
     pa.field("parse_error",            pa.string()),
     pa.field("judge_latency_ms",       pa.int64()),
     pa.field("judge_tokens_used",      pa.int64()),
+    pa.field("response_text",          pa.string()),
+    pa.field("response_truncated",     pa.bool_()),
+    pa.field("gt_provided",            pa.bool_()),
+    pa.field("rubric_version",         pa.int32()),
 ])
 
 
@@ -230,6 +242,10 @@ def append_row_to_parquet(row: dict) -> None:
         "parse_error":           str(row.get("parse_error") or ""),
         "judge_latency_ms":      int(row["judge_latency_ms"]),
         "judge_tokens_used":     int(row["judge_tokens_used"]),
+        "response_text":         str(row.get("response_text") or ""),
+        "response_truncated":    bool(row.get("response_truncated", False)),
+        "gt_provided":           bool(row.get("gt_provided", False)),
+        "rubric_version":        int(row.get("rubric_version", RUBRIC_VERSION)),
     }
     table = pa.Table.from_pydict({k: [v] for k, v in record.items()}, schema=_SCHEMA)
     final = _row_path(record["prompt_id"], record["model"])
@@ -238,6 +254,57 @@ def append_row_to_parquet(row: dict) -> None:
     with open(tmp, "r+b") as f:
         os.fsync(f.fileno())
     os.replace(tmp, final)
+
+
+_ARCHIVE_CMD = (
+    r"mkdir data\_archive_v1_rows && move data\rows\*.parquet data\_archive_v1_rows\ "
+).strip()
+
+
+def _print_schema_guard_banner(fname: str, reason: str) -> None:
+    lines = [
+        "",
+        _QUOTA_BOX_BAR,
+        "  KRITERION — STALE ROW SCHEMA DETECTED, REFUSING TO START",
+        _QUOTA_BOX_BAR,
+        f"  File:     {fname}",
+        f"  Reason:   {reason}",
+        f"  Current rubric_version: {RUBRIC_VERSION}",
+        _QUOTA_BOX_DIV,
+        "  data/rows/ holds rows from an older schema. Mixing them with a new",
+        "  run corrupts consolidation and silently drops the old run's data.",
+        "  Move the old rows aside first, then re-run:",
+        "",
+        f"    {_ARCHIVE_CMD}",
+        _QUOTA_BOX_BAR,
+        "",
+    ]
+    print("\n".join(lines), flush=True)
+
+
+def check_row_schema_guard() -> None:
+    """Refuse to start if any row file predates the current RUBRIC_VERSION.
+
+    Old rows are the only record of the published run — never auto-migrated
+    or auto-deleted. Exits nonzero before any writes happen this run."""
+    if not os.path.isdir(ROWS_DIR):
+        return
+    for fname in sorted(os.listdir(ROWS_DIR)):
+        if not fname.endswith(".parquet"):
+            continue
+        path = os.path.join(ROWS_DIR, fname)
+        try:
+            schema = pq.read_schema(path)
+        except Exception:
+            continue  # unreadable file — consolidation will surface it later
+        if "rubric_version" not in schema.names:
+            _print_schema_guard_banner(fname, "rubric_version column missing (pre-schema-v2 row)")
+            sys.exit(1)
+        table = pq.read_table(path, columns=["rubric_version"])
+        if table.num_rows and table["rubric_version"][0].as_py() < RUBRIC_VERSION:
+            found = table["rubric_version"][0].as_py()
+            _print_schema_guard_banner(fname, f"rubric_version={found} < current {RUBRIC_VERSION}")
+            sys.exit(1)
 
 
 def consolidate_rows_to_parquet() -> int:
@@ -257,12 +324,26 @@ def consolidate_rows_to_parquet() -> int:
     ever maps to the same pair."""
     active = pa.array(list(EVALUATOR_MODELS), type=pa.string())
     tables = []
+    fnames = []
     if os.path.isdir(ROWS_DIR):
         for fname in sorted(os.listdir(ROWS_DIR)):
             if fname.endswith(".parquet"):
                 tables.append(pq.read_table(os.path.join(ROWS_DIR, fname)))
+                fnames.append(fname)
     if not tables:
         return 0
+    # Defensive: pyarrow's promote_options="default" would silently unify
+    # mismatched schemas (e.g. a stray v1 row file) rather than erroring, which
+    # would corrupt the consolidated output. The startup guard should catch
+    # this first, but fail loudly here too rather than concat silently.
+    base_schema = tables[0].schema
+    for t, fname in zip(tables, fnames):
+        if not t.schema.equals(base_schema):
+            raise ValueError(
+                f"Row schema mismatch in '{fname}': expected {base_schema.names}, "
+                f"got {t.schema.names}. Mixed-version rows in {ROWS_DIR} — "
+                f"move old rows aside: {_ARCHIVE_CMD}"
+            )
     combined = pa.concat_tables(tables, promote_options="default")
     mask = pc.is_in(combined["model"], value_set=active)
     combined = combined.filter(mask)
@@ -378,6 +459,7 @@ def build_result_row(
     scores: dict,
     day_of_run: int,
 ) -> dict:
+    response_text = eval_result.text or ""
     return {
         "prompt_id":             prompt_obj["id"],
         "model":                 model,
@@ -397,6 +479,10 @@ def build_result_row(
         "judge_tokens_used":     scores["judge_tokens_used"],
         "day_of_run":            day_of_run,
         "difficulty":            prompt_obj.get("difficulty") or "",
+        "response_text":         response_text[:STORE_RESPONSE_MAX_CHARS],
+        "response_truncated":    bool(scores.get("response_truncated", False)),
+        "gt_provided":           bool(scores.get("gt_provided", False)),
+        "rubric_version":        RUBRIC_VERSION,
     }
 
 
@@ -605,6 +691,7 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     args = _parse_args()
     os.makedirs(DATA_DIR, exist_ok=True)
+    check_row_schema_guard()
 
     prompts         = load_prompts()
     state           = load_state()

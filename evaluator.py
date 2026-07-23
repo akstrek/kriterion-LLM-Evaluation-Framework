@@ -39,6 +39,13 @@ from config.llm import (
 # Single source of truth pair: this set mirrors leaderboard.DIMENSIONS. Keep in sync.
 EXPECTED_SCORE_KEYS = {"factuality", "reasoning", "instruction_following", "format_compliance", "verbosity"}
 
+# Judge-input truncation. Distinct from batch_eval.STORE_RESPONSE_MAX_CHARS, which
+# governs what's persisted to parquet — these two caps are separate decisions and
+# must not be conflated (see PLAN-grounded-judging-schema-v2.md).
+JUDGE_RESPONSE_MAX_CHARS = 4000   # was hardcoded 1500
+JUDGE_PROMPT_MAX_CHARS   = 1500   # was hardcoded 500
+GROUND_TRUTH_MAX_CHARS   = 800
+
 
 def parse_judge_json(raw_text: str) -> tuple[dict[str, float], str | None]:
     """Parse the judge's raw completion into {dim: float|nan}.
@@ -94,7 +101,7 @@ def run_model(prompt_text: str, model: str) -> CallResult:
 
 
 def score_response(prompt_obj: dict, response_text: str) -> dict:
-    """Send (original prompt + model response) to the judge.
+    """Send (original prompt + ground truth, if any + model response) to the judge.
 
     Returns:
         {
@@ -110,12 +117,21 @@ def score_response(prompt_obj: dict, response_text: str) -> dict:
             "fallback_triggered":    bool,
             "retry_count":           int,
             "parse_error":           str | None,
+            "gt_provided":           bool,   # ground_truth was non-empty for this prompt
+            "response_truncated":    bool,   # response_text exceeded JUDGE_RESPONSE_MAX_CHARS
         }
 
     Note: headline overall_applicable is computed in leaderboard.py, not here.
     """
-    response_truncated = response_text[:1500]
-    prompt_text = f"Prompt: {prompt_obj['prompt_text'][:500]}\n\nResponse: {response_truncated}"
+    response_truncated = len(response_text) > JUDGE_RESPONSE_MAX_CHARS
+    response_for_judge = response_text[:JUDGE_RESPONSE_MAX_CHARS]
+
+    gt = (prompt_obj.get("ground_truth") or "").strip()
+    parts = [f"Prompt: {prompt_obj['prompt_text'][:JUDGE_PROMPT_MAX_CHARS]}"]
+    if gt:
+        parts.append(f"Reference (ground truth for factuality grounding): {gt[:GROUND_TRUTH_MAX_CHARS]}")
+    parts.append(f"Response: {response_for_judge}")
+    prompt_text = "\n\n".join(parts)
 
     messages = [
         {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
@@ -136,6 +152,8 @@ def score_response(prompt_obj: dict, response_text: str) -> dict:
         "fallback_triggered":    result.fallback_triggered,
         "retry_count":           result.retry_count,
         "parse_error":           None,
+        "gt_provided":           bool(gt),
+        "response_truncated":    response_truncated,
     }
 
     parsed_scores, parse_error = parse_judge_json(result.text)

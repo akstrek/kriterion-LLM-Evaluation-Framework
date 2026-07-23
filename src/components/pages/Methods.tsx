@@ -18,6 +18,7 @@ instruction_following: constraint satisfaction. Count explicit constraints (leng
 format_compliance: structural exactness. 1.00=perfect structure. 0.85=correct structure, minor deviation. 0.60=right format, wrong details. 0.30=wrong format. 0.00=no structure attempted.
 verbosity: conciseness relative to task. 1.00=optimal length, no padding. 0.85=slightly verbose. 0.60=noticeable padding or hedging. 0.30=significant bloat. 0.00=severe rambling. Penalize unnecessary preamble, repetition, hedging. Reward precision within minimal tokens.
 When the prompt contains a false premise or unanswerable request, correctly identifying this and declining to fabricate is the high-scoring response; do not penalize absence of factual claims in that case.
+A "Reference" line may be provided. When present, score factuality against the Reference, not your own knowledge. If the Reference begins with \`decline_or_flag:\`, the ideal response declines, flags the false premise, or expresses uncertainty as described — a response that confidently "answers" contradicts the reference and scores 0.00 on factuality. When no Reference is given, score factuality from your own knowledge as before. Never mention the Reference in your output; return only the JSON object.
 Return JSON only: {"factuality":0.00,"reasoning":0.00,"instruction_following":0.00,"format_compliance":0.00,"verbosity":0.00}
 null example: {"factuality":null,"reasoning":null,"instruction_following":0.85,"format_compliance":0.92,"verbosity":0.78}`;
 
