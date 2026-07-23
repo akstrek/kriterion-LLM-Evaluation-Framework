@@ -35,3 +35,13 @@ export interface ModelDifficultyRow {
   verbosity: number;
   nPrompts: number;
 }
+
+export interface JudgeCalibrationRow {
+  dim: string;
+  nProbes: number;
+  nRuns: number;
+  bandHitRate: number;
+  mae: number;
+  testRetestStd: number;
+  nParseFailures: number;
+}

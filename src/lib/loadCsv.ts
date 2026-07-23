@@ -1,5 +1,5 @@
 import Papa from 'papaparse';
-import { ModelPerformance, ModelDifficultyRow } from '../types';
+import { ModelPerformance, ModelDifficultyRow, JudgeCalibrationRow } from '../types';
 
 // FALLBACK_DATA is only used when the runtime CSV is missing or malformed —
 // e.g. local dev before the first eval run. Values are placeholders, not
@@ -118,6 +118,21 @@ function mapRow(row: any): ModelPerformance | null {
   };
 }
 
+function mapCalibrationRow(row: any): JudgeCalibrationRow | null {
+  if (!row || !row.dim) return null;
+  const bandHitRate = Number(row.band_hit_rate);
+  if (!Number.isFinite(bandHitRate)) return null;
+  return {
+    dim: String(row.dim),
+    nProbes: num(row.n_probes),
+    nRuns: num(row.n_runs),
+    bandHitRate,
+    mae: num(row.mae_vs_band_midpoint),
+    testRetestStd: num(row.test_retest_std),
+    nParseFailures: num(row.n_parse_failures),
+  };
+}
+
 function mapDifficultyRow(row: any): ModelDifficultyRow | null {
   if (!row || !row.model || !row.difficulty) return null;
   const overall = Number(row.overall_applicable);
@@ -186,6 +201,34 @@ export async function loadLeaderboardByDifficulty(): Promise<ModelDifficultyRow[
           const mapped = (results.data as any[])
             .map(mapDifficultyRow)
             .filter((r): r is ModelDifficultyRow => r !== null);
+          resolve(mapped);
+        },
+        error: () => resolve([]),
+      });
+    });
+  } catch {
+    return [];
+  }
+}
+
+export async function loadJudgeCalibration(): Promise<JudgeCalibrationRow[]> {
+  try {
+    const res = await fetch('/data/judge_calibration.csv');
+    if (!res.ok) return [];
+
+    const contentType = res.headers.get('content-type');
+    if (contentType && contentType.includes('text/html')) return [];
+
+    const text = await res.text();
+    return new Promise((resolve) => {
+      Papa.parse(text, {
+        header: true,
+        dynamicTyping: true,
+        skipEmptyLines: true,
+        complete: (results) => {
+          const mapped = (results.data as any[])
+            .map(mapCalibrationRow)
+            .filter((r): r is JudgeCalibrationRow => r !== null);
           resolve(mapped);
         },
         error: () => resolve([]),

@@ -1,0 +1,292 @@
+[
+  {
+    "probe_id": "CAL_FACT_HI_01",
+    "target_dim": "factuality",
+    "prompt_text": "What is the boiling point of water at sea level in Celsius?",
+    "response_text": "100 °C.",
+    "expected": {"factuality": [0.85, 1.00]},
+    "applicable_dims": ["factuality", "instruction_following", "format_compliance", "verbosity"],
+    "rationale": "Single correct claim, no fabrication."
+  },
+  {
+    "probe_id": "CAL_FACT_HI_02",
+    "target_dim": "factuality",
+    "prompt_text": "What is the capital of Japan?",
+    "response_text": "The capital of Japan is Tokyo.",
+    "expected": {"factuality": [0.85, 1.00]},
+    "applicable_dims": ["factuality", "instruction_following", "format_compliance", "verbosity"],
+    "rationale": "Single correct, verifiable claim."
+  },
+  {
+    "probe_id": "CAL_FACT_MID_01",
+    "target_dim": "factuality",
+    "prompt_text": "Name the three primary colors and the largest ocean on Earth.",
+    "response_text": "The three primary colors are red, blue, and yellow. The largest ocean on Earth is the Atlantic Ocean.",
+    "expected": {"factuality": [0.30, 0.60]},
+    "applicable_dims": ["factuality", "instruction_following", "format_compliance", "verbosity"],
+    "rationale": "Primary colors correct; largest-ocean claim is wrong (Pacific, not Atlantic) — one wrong claim among two."
+  },
+  {
+    "probe_id": "CAL_FACT_MID_02",
+    "target_dim": "factuality",
+    "prompt_text": "What is the tallest mountain in the world and what is the currency of Germany?",
+    "response_text": "The tallest mountain in the world is Mount Everest. The currency of Germany is the Deutsche Mark.",
+    "expected": {"factuality": [0.30, 0.60]},
+    "applicable_dims": ["factuality", "instruction_following", "format_compliance", "verbosity"],
+    "rationale": "Everest claim correct; currency claim is outdated/wrong (Euro since 2002) — one wrong claim among two."
+  },
+  {
+    "probe_id": "CAL_FACT_LOW_01",
+    "target_dim": "factuality",
+    "prompt_text": "When was the Eiffel Tower completed, and who commissioned it?",
+    "response_text": "The Eiffel Tower was completed in 1923, commissioned by Napoleon III to celebrate France's colonial expansion into Southeast Asia.",
+    "expected": {"factuality": [0.00, 0.30]},
+    "applicable_dims": ["factuality", "instruction_following", "format_compliance", "verbosity"],
+    "rationale": "Multiple fabrications: wrong completion year (1889), Napoleon III died in 1873 and did not commission it, invented purpose."
+  },
+  {
+    "probe_id": "CAL_FACT_LOW_02",
+    "target_dim": "factuality",
+    "prompt_text": "Who wrote the play Romeo and Juliet, and in what century?",
+    "response_text": "Romeo and Juliet was written by Charles Dickens in the 19th century.",
+    "expected": {"factuality": [0.00, 0.30]},
+    "applicable_dims": ["factuality", "instruction_following", "format_compliance", "verbosity"],
+    "rationale": "Wrong author and wrong century entirely (Shakespeare, 16th century) — confidently fabricated."
+  },
+  {
+    "probe_id": "CAL_REAS_HI_01",
+    "target_dim": "reasoning",
+    "prompt_text": "Alice is three times as old as Bob. In 8 years, Alice will be twice as old as Bob. How old is Alice now? Show each algebraic step.",
+    "response_text": "Let Bob's age be b, so Alice's age is 3b. In 8 years: 3b + 8 = 2(b + 8). Expanding: 3b + 8 = 2b + 16, so b = 8. Alice is 3b = 24 years old now.",
+    "expected": {"reasoning": [0.85, 1.00]},
+    "applicable_dims": ["reasoning", "instruction_following", "format_compliance", "verbosity"],
+    "rationale": "Correct, fully shown algebraic derivation reaching the right answer."
+  },
+  {
+    "probe_id": "CAL_REAS_HI_02",
+    "target_dim": "reasoning",
+    "prompt_text": "A train travels 60 miles in 1.5 hours. At the same rate, how long will it take to travel 150 miles? Show your reasoning.",
+    "response_text": "Rate = 60 miles / 1.5 hours = 40 mph. Time for 150 miles = 150 / 40 = 3.75 hours.",
+    "expected": {"reasoning": [0.85, 1.00]},
+    "applicable_dims": ["reasoning", "instruction_following", "format_compliance", "verbosity"],
+    "rationale": "Correct rate computation and clean application to the new distance."
+  },
+  {
+    "probe_id": "CAL_REAS_MID_01",
+    "target_dim": "reasoning",
+    "prompt_text": "If a train's speed increases by 20% and then decreases by 20%, is the final speed higher, lower, or the same as the original? Explain.",
+    "response_text": "Start at 100: after +20% it's 120, after -20% it's 120*0.8=96. So it ends up slightly lower than the original, but the difference is small enough that we can basically treat it as the same for practical purposes.",
+    "expected": {"reasoning": [0.30, 0.60]},
+    "applicable_dims": ["reasoning", "instruction_following", "format_compliance", "verbosity"],
+    "rationale": "Arithmetic is correct and the conclusion (lower) is technically right, but the closing hedge undermines it — a weak final step riding on correct math."
+  },
+  {
+    "probe_id": "CAL_REAS_MID_02",
+    "target_dim": "reasoning",
+    "prompt_text": "Sequence: 3, 6, 12, 24, ... What is the next number and the pattern rule?",
+    "response_text": "Each term doubles the previous one (multiply by 2), so the next term is 24 * 2 = 48. This is a geometric sequence with a common difference of 2.",
+    "expected": {"reasoning": [0.30, 0.60]},
+    "applicable_dims": ["reasoning", "instruction_following", "format_compliance", "verbosity"],
+    "rationale": "Correct numeric answer and correct pattern identification, but 'common difference' is the wrong term (that applies to arithmetic sequences, not geometric ones) — mostly correct with one weak conceptual step."
+  },
+  {
+    "probe_id": "CAL_REAS_LOW_01",
+    "target_dim": "reasoning",
+    "prompt_text": "All cats are animals. All dogs are animals. Therefore all cats are dogs. Is this argument valid? Explain why or why not.",
+    "response_text": "Yes, this argument is valid. Since both cats and dogs are animals, and they share the animal category, cats and dogs must be the same in this way, meaning cats are essentially a form of dog.",
+    "expected": {"reasoning": [0.00, 0.30]},
+    "applicable_dims": ["reasoning", "instruction_following", "format_compliance", "verbosity"],
+    "rationale": "Endorses a textbook-invalid syllogism as valid; the justification is incoherent, not just imprecise."
+  },
+  {
+    "probe_id": "CAL_REAS_LOW_02",
+    "target_dim": "reasoning",
+    "prompt_text": "A car travels 100 km in 2 hours, then 100 km in 4 hours. What's the average speed for the whole trip? Show your work.",
+    "response_text": "The two legs were 50 km/h and 25 km/h. Average speed = average of the two speeds = (50+25)/2 = 37.5 km/h.",
+    "expected": {"reasoning": [0.00, 0.30]},
+    "applicable_dims": ["reasoning", "instruction_following", "format_compliance", "verbosity"],
+    "rationale": "Classic flawed-logic error: averaging the two speeds instead of total distance / total time (correct answer is 200/6 ≈ 33.3 km/h)."
+  },
+  {
+    "probe_id": "CAL_INST_HI_01",
+    "target_dim": "instruction_following",
+    "prompt_text": "List exactly 3 programming languages, one per line, no punctuation.",
+    "response_text": "Python\nJavaScript\nRust",
+    "expected": {"instruction_following": [0.85, 1.00]},
+    "applicable_dims": ["instruction_following", "format_compliance", "verbosity"],
+    "rationale": "Meets count, one-per-line, and no-punctuation constraints exactly."
+  },
+  {
+    "probe_id": "CAL_INST_HI_02",
+    "target_dim": "instruction_following",
+    "prompt_text": "In exactly one sentence, define photosynthesis.",
+    "response_text": "Photosynthesis is the process by which plants convert sunlight, water, and carbon dioxide into glucose and oxygen.",
+    "expected": {"instruction_following": [0.85, 1.00]},
+    "applicable_dims": ["instruction_following", "format_compliance", "verbosity"],
+    "rationale": "Single sentence, correctly scoped definition — all explicit constraints met."
+  },
+  {
+    "probe_id": "CAL_INST_MID_01",
+    "target_dim": "instruction_following",
+    "prompt_text": "Write a 3-line poem about the ocean. Do not use the word 'wave'. Do not use rhyme.",
+    "response_text": "The ocean stretches beyond sight.\nSalt air fills the morning.\nDeep water holds ancient silence.\nFoam gathers along the shore.",
+    "expected": {"instruction_following": [0.30, 0.60]},
+    "applicable_dims": ["instruction_following", "format_compliance", "verbosity"],
+    "rationale": "Avoids 'wave' and avoids rhyme (2 of 3 constraints met) but is 4 lines instead of exactly 3."
+  },
+  {
+    "probe_id": "CAL_INST_MID_02",
+    "target_dim": "instruction_following",
+    "prompt_text": "Provide a recipe title, list exactly 4 ingredients, and end with the word 'Enjoy!'",
+    "response_text": "Title: Garlic Butter Pasta. Ingredients: pasta, garlic, butter, parmesan cheese, salt. Enjoy!",
+    "expected": {"instruction_following": [0.30, 0.60]},
+    "applicable_dims": ["instruction_following", "format_compliance", "verbosity"],
+    "rationale": "Title present and ends with 'Enjoy!' (2 of 3 constraints met) but lists 5 ingredients instead of exactly 4."
+  },
+  {
+    "probe_id": "CAL_INST_LOW_01",
+    "target_dim": "instruction_following",
+    "prompt_text": "Write exactly 3 bullet points about cats, using no emoji, and starting each bullet with a verb.",
+    "response_text": "🐱 Cats are great pets. Cats sleep a lot. Meow! 😻",
+    "expected": {"instruction_following": [0.00, 0.30]},
+    "applicable_dims": ["instruction_following", "format_compliance", "verbosity"],
+    "rationale": "No bullet formatting, contains emoji, no bullet starts with a verb — violates all 3 constraints."
+  },
+  {
+    "probe_id": "CAL_INST_LOW_02",
+    "target_dim": "instruction_following",
+    "prompt_text": "Respond only in valid JSON with keys 'name' and 'age'. Do not include any prose outside the JSON. Keep it under 50 characters.",
+    "response_text": "Sure! Here's the info you wanted: The person's name is John and he is 30 years old, hope that helps!",
+    "expected": {"instruction_following": [0.00, 0.30]},
+    "applicable_dims": ["instruction_following", "format_compliance", "verbosity"],
+    "rationale": "No JSON at all, all prose, far over the character limit — violates all 3 constraints."
+  },
+  {
+    "probe_id": "CAL_FMT_HI_01",
+    "target_dim": "format_compliance",
+    "prompt_text": "Return a JSON object with keys 'city' and 'population' for Paris.",
+    "response_text": "{\"city\": \"Paris\", \"population\": 2148000}",
+    "expected": {"format_compliance": [0.85, 1.00]},
+    "applicable_dims": ["format_compliance", "instruction_following", "verbosity"],
+    "rationale": "Valid, minimal, well-formed JSON matching the requested schema exactly."
+  },
+  {
+    "probe_id": "CAL_FMT_HI_02",
+    "target_dim": "format_compliance",
+    "prompt_text": "Format your answer as a markdown table with columns Name and Capital for France and Germany.",
+    "response_text": "| Name | Capital |\n|------|---------|\n| France | Paris |\n| Germany | Berlin |",
+    "expected": {"format_compliance": [0.85, 1.00]},
+    "applicable_dims": ["format_compliance", "instruction_following", "verbosity"],
+    "rationale": "Correct markdown table syntax with the requested columns and rows."
+  },
+  {
+    "probe_id": "CAL_FMT_MID_01",
+    "target_dim": "format_compliance",
+    "prompt_text": "Return a JSON object with keys 'name' and 'score'.",
+    "response_text": "{'name': 'Widget', 'score': 42,}",
+    "expected": {"format_compliance": [0.30, 0.60]},
+    "applicable_dims": ["format_compliance", "instruction_following", "verbosity"],
+    "rationale": "Right structural intent (object with the two keys) but invalid JSON syntax: single quotes and a trailing comma."
+  },
+  {
+    "probe_id": "CAL_FMT_MID_02",
+    "target_dim": "format_compliance",
+    "prompt_text": "Provide the answer as a numbered list (1., 2., 3.).",
+    "response_text": "- First\n- Second\n- Third",
+    "expected": {"format_compliance": [0.30, 0.60]},
+    "applicable_dims": ["format_compliance", "instruction_following", "verbosity"],
+    "rationale": "Right general list format but uses dash bullets instead of the requested numbering."
+  },
+  {
+    "probe_id": "CAL_FMT_LOW_01",
+    "target_dim": "format_compliance",
+    "prompt_text": "Return a JSON object with keys 'title' and 'year'.",
+    "response_text": "The title is Inception and the year is 2010.",
+    "expected": {"format_compliance": [0.00, 0.30]},
+    "applicable_dims": ["format_compliance", "instruction_following", "verbosity"],
+    "rationale": "Plain prose — no JSON structure attempted at all."
+  },
+  {
+    "probe_id": "CAL_FMT_LOW_02",
+    "target_dim": "format_compliance",
+    "prompt_text": "Format the answer as a CSV with header row 'item,price'.",
+    "response_text": "There's a widget that costs five dollars, and a gadget that costs ten dollars.",
+    "expected": {"format_compliance": [0.00, 0.30]},
+    "applicable_dims": ["format_compliance", "instruction_following", "verbosity"],
+    "rationale": "Prose description with no CSV structure, no header row, no delimiters."
+  },
+  {
+    "probe_id": "CAL_VERB_HI_01",
+    "target_dim": "verbosity",
+    "prompt_text": "What year did World War II end?",
+    "response_text": "1945.",
+    "expected": {"verbosity": [0.85, 1.00]},
+    "applicable_dims": ["factuality", "instruction_following", "format_compliance", "verbosity"],
+    "rationale": "Optimal length for a one-fact question — no padding."
+  },
+  {
+    "probe_id": "CAL_VERB_HI_02",
+    "target_dim": "verbosity",
+    "prompt_text": "Is the number 17 prime?",
+    "response_text": "Yes, 17 is prime.",
+    "expected": {"verbosity": [0.85, 1.00]},
+    "applicable_dims": ["factuality", "instruction_following", "format_compliance", "verbosity"],
+    "rationale": "Direct, minimal answer with no unnecessary elaboration."
+  },
+  {
+    "probe_id": "CAL_VERB_MID_01",
+    "target_dim": "verbosity",
+    "prompt_text": "What is the capital of Canada?",
+    "response_text": "That's a great question! The capital of Canada is Ottawa. I hope that helps!",
+    "expected": {"verbosity": [0.30, 0.60]},
+    "applicable_dims": ["factuality", "instruction_following", "format_compliance", "verbosity"],
+    "rationale": "Correct answer wrapped in noticeable hedging/padding preamble and sign-off."
+  },
+  {
+    "probe_id": "CAL_VERB_MID_02",
+    "target_dim": "verbosity",
+    "prompt_text": "How many continents are there?",
+    "response_text": "Great question! There are generally considered to be 7 continents on Earth, though some geographers group them differently.",
+    "expected": {"verbosity": [0.30, 0.60]},
+    "applicable_dims": ["factuality", "instruction_following", "format_compliance", "verbosity"],
+    "rationale": "Correct core answer buried in hedging and an unrequested aside."
+  },
+  {
+    "probe_id": "CAL_VERB_LOW_01",
+    "target_dim": "verbosity",
+    "prompt_text": "What is the chemical formula for table salt?",
+    "response_text": "I'd be happy to help you with this question about chemistry! Table salt is a fascinating compound that has been used by humans for thousands of years, dating back to ancient civilizations who prized it for preservation and flavor. Let me give you some background before answering directly, since context is often helpful. Now, to actually answer your question: the chemical formula for table salt, also known as sodium chloride, is NaCl, which as I mentioned represents one sodium atom bonded to one chlorine atom — a topic we could explore further if you're interested, though I don't want to over-explain given you probably already know the basics.",
+    "expected": {"verbosity": [0.00, 0.30]},
+    "applicable_dims": ["factuality", "instruction_following", "format_compliance", "verbosity"],
+    "rationale": "Three paragraphs of preamble and restatement to answer a one-line factual question — severe rambling."
+  },
+  {
+    "probe_id": "CAL_VERB_LOW_02",
+    "target_dim": "verbosity",
+    "prompt_text": "What color is the sky on a clear day?",
+    "response_text": "That's an interesting question to think about! The sky's appearance is actually the result of a phenomenon called Rayleigh scattering, and before I get into the direct answer I want to set some context so the answer makes more sense to you. Scientists have studied atmospheric optics for centuries, and there's a lot of rich history there worth mentioning. Anyway, to directly answer what you asked: on a clear day, the sky appears blue. As I noted above, this is due to scattering effects, which I could elaborate on further if that would be helpful, but I'll stop here for now since you just asked a simple color question.",
+    "expected": {"verbosity": [0.00, 0.30]},
+    "applicable_dims": ["factuality", "instruction_following", "format_compliance", "verbosity"],
+    "rationale": "Excessive preamble, meta-commentary, and restatement around a one-word answer — severe rambling."
+  },
+  {
+    "probe_id": "CAL_NULL_FACT_01",
+    "target_dim": "factuality",
+    "prompt_text": "Write a haiku about rain.",
+    "response_text": "Silver drops descend\nWhispering on rooftops now\nEarth drinks the grey sky",
+    "expected": {},
+    "applicable_dims": ["instruction_following", "format_compliance", "verbosity"],
+    "rationale": "No factual claims are made — the judge should return null for factuality, not a low score.",
+    "expect_null": ["factuality"]
+  },
+  {
+    "probe_id": "CAL_NULL_REAS_01",
+    "target_dim": "reasoning",
+    "prompt_text": "Write a short, warm greeting for a birthday card.",
+    "response_text": "Happy Birthday! Wishing you a wonderful day filled with joy and laughter.",
+    "expected": {},
+    "applicable_dims": ["instruction_following", "format_compliance", "verbosity"],
+    "rationale": "No inference or reasoning is required by the task — the judge should return null for reasoning, not a low score.",
+    "expect_null": ["reasoning"]
+  }
+]

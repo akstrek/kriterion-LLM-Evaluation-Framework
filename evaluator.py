@@ -40,6 +40,50 @@ from config.llm import (
 EXPECTED_SCORE_KEYS = {"factuality", "reasoning", "instruction_following", "format_compliance", "verbosity"}
 
 
+def parse_judge_json(raw_text: str) -> tuple[dict[str, float], str | None]:
+    """Parse the judge's raw completion into {dim: float|nan}.
+
+    Returns (scores, parse_error). All five EXPECTED_SCORE_KEYS dims are always
+    present in the returned dict; null -> NaN. Empty/unparseable input -> all-NaN
+    scores + a non-None error string. Used by both production scoring
+    (score_response) and the calibration probe runner — keep semantics identical
+    between the two callers.
+    """
+    scores: dict[str, float] = {key: float("nan") for key in EXPECTED_SCORE_KEYS}
+
+    raw_text = (raw_text or "").strip()
+    if not raw_text:
+        return scores, "Empty judge response"
+
+    # Strip ``` and ```json fences if present.
+    raw = raw_text
+    if raw.startswith("```"):
+        parts = raw.split("```")
+        if len(parts) >= 2:
+            raw = parts[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+            raw = raw.strip()
+
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return scores, f"JSONDecodeError: {exc} | raw={raw[:200]}"
+
+    if not isinstance(parsed, dict):
+        return scores, f"Judge returned non-object: {type(parsed).__name__}"
+
+    missing = []
+    for key in EXPECTED_SCORE_KEYS:
+        if key in parsed:
+            val = parsed[key]
+            scores[key] = float("nan") if val is None else float(val)
+        else:
+            missing.append(key)
+    parse_error = f"Missing keys: {sorted(missing)}" if missing else None
+    return scores, parse_error
+
+
 def run_model(prompt_text: str, model: str) -> CallResult:
     """Send prompt_text to an evaluator model via call_model."""
     messages = [
@@ -94,43 +138,14 @@ def score_response(prompt_obj: dict, response_text: str) -> dict:
         "parse_error":           None,
     }
 
-    raw_text = (result.text or "").strip()
-    if not raw_text:
+    parsed_scores, parse_error = parse_judge_json(result.text)
+    scores.update(parsed_scores)
+    scores["parse_error"] = parse_error
+    # judge_empty means "no usable JSON object at all" — missing individual keys
+    # still yields a usable (partially-NaN) object, so that case leaves it False.
+    hard_failure_prefixes = ("Empty judge response", "JSONDecodeError", "Judge returned non-object")
+    if parse_error is not None and parse_error.startswith(hard_failure_prefixes):
         scores["judge_empty"] = True
-        scores["parse_error"] = "Empty judge response"
-        return scores
-
-    # Strip ``` and ```json fences if present.
-    raw = raw_text
-    if raw.startswith("```"):
-        parts = raw.split("```")
-        if len(parts) >= 2:
-            raw = parts[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-            raw = raw.strip()
-
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        scores["judge_empty"] = True
-        scores["parse_error"] = f"JSONDecodeError: {exc} | raw={raw[:200]}"
-        return scores
-
-    if not isinstance(parsed, dict):
-        scores["judge_empty"] = True
-        scores["parse_error"] = f"Judge returned non-object: {type(parsed).__name__}"
-        return scores
-
-    missing = []
-    for key in EXPECTED_SCORE_KEYS:
-        if key in parsed:
-            val = parsed[key]
-            scores[key] = float("nan") if val is None else float(val)
-        else:
-            missing.append(key)
-    if missing:
-        scores["parse_error"] = f"Missing keys: {sorted(missing)}"
 
     return scores
 

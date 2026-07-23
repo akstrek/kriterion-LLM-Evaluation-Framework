@@ -1,9 +1,12 @@
+import { useEffect, useState } from "react";
 import { motion } from "motion/react";
 import { BottomLeft } from "../layout/BottomLeft";
 import { BottomRight } from "../layout/BottomRight";
 import { ScrollableZone } from "../layout/ScrollableZone";
 import { ExpandableViz } from "../layout/ExpandableViz";
 import promptSuite from "../../../prompts/prompt_suite.json";
+import { loadJudgeCalibration } from "../../lib/loadCsv";
+import { JudgeCalibrationRow } from "../../types";
 
 // Mirror of config/llm.py — keep in sync.
 const JUDGE_MODEL = "nvidia/nemotron-3-super-120b-a12b:free";
@@ -59,6 +62,12 @@ const labelClass =
   "text-[#F5F0E8] text-[11px] uppercase tracking-wider mb-1";
 
 export function Methods() {
+  const [calibration, setCalibration] = useState<JudgeCalibrationRow[]>([]);
+
+  useEffect(() => {
+    loadJudgeCalibration().then(setCalibration);
+  }, []);
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -173,11 +182,40 @@ export function Methods() {
                   </div>
                   <div>
                     <p className={labelClass}>Judge Calibration</p>
-                    <p className={bodyClass}>
-                      Calibration probes (anchor responses with known scores run through the judge daily)
-                      are planned but not yet implemented. This is standard practice in HELM and
-                      lm-eval-harness. Until implemented, judge drift across multi-day runs is unmonitored.
-                    </p>
+                    {calibration.length ? (
+                      <>
+                        <p className={`${bodyClass} mb-3`}>
+                          32 anchor (prompt, response) pairs with known-quality score bands, run through
+                          the judge 3× each. Band-hit rate is the share of runs landing in the expected
+                          band; test–retest σ is the spread across repeated runs of the same probe —
+                          this is standard practice in HELM and lm-eval-harness.
+                        </p>
+                        <div className="grid grid-cols-[1fr_90px_90px] gap-x-4 gap-y-1">
+                          <div className={`${labelClass} mb-0`}>Dimension</div>
+                          <div className={`${labelClass} mb-0`}>Band-hit</div>
+                          <div className={`${labelClass} mb-0`}>Test–retest σ</div>
+                          {calibration.map((row) => (
+                            <div key={row.dim} className="contents">
+                              <div className="text-[#F5F0E8] text-[12px] border-t border-white/10 pt-1">
+                                {titleCase(row.dim)}
+                              </div>
+                              <div className="text-[#C8C2B8] text-[12px] font-mono border-t border-white/10 pt-1">
+                                {(row.bandHitRate * 100).toFixed(0)}%
+                              </div>
+                              <div className="text-[#C8C2B8] text-[12px] font-mono border-t border-white/10 pt-1">
+                                {row.testRetestStd.toFixed(3)}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    ) : (
+                      <p className={bodyClass}>
+                        Calibration probes (anchor responses with known scores run through the judge daily)
+                        are planned but not yet implemented. This is standard practice in HELM and
+                        lm-eval-harness. Until implemented, judge drift across multi-day runs is unmonitored.
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>
