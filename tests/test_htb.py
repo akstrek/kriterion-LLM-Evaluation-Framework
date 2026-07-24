@@ -89,13 +89,15 @@ def test_reset_daily_clears_counters():
 
 
 def test_default_tree_budgets_sum_to_root():
-    """Provider daily budgets should total to the eval+judge split (650+300=950)."""
+    """Provider daily budgets should total to the eval+judge1+judge2 split (650+300+350=1300)."""
     tree = HTBTree()
     total = sum(n.daily_budget for n in tree.providers.values())
-    assert total == 950
-    assert tree.root.daily_budget == 950
+    assert total == 1300
+    assert tree.root.daily_budget == 1300
     # nvidia gets the full judge allocation.
     assert tree.providers["nvidia"].daily_budget == 300
+    # poolside (judge2) gets its own allocation.
+    assert tree.providers["poolside"].daily_budget == 350
     # eval providers sum to 650.
     eval_total = sum(tree.providers[p].daily_budget
                      for p in ("openai", "moonshotai", "google"))

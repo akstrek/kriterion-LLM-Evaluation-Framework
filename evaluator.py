@@ -91,6 +91,25 @@ def parse_judge_json(raw_text: str) -> tuple[dict[str, float], str | None]:
     return scores, parse_error
 
 
+def build_judge_user_message(prompt_obj: dict, response_text: str) -> tuple[str, bool]:
+    """Build the judge's user-turn content exactly as score_response sends it.
+
+    Returns (message_text, response_truncated). Shared by production scoring
+    and second_judge.py so a second judge re-scores the identical input judge 1
+    saw — any drift here would make inter-judge disagreement measure prompt
+    construction, not judge bias (see PLAN-multi-judge-ensemble.md).
+    """
+    response_truncated = len(response_text) > JUDGE_RESPONSE_MAX_CHARS
+    response_for_judge = response_text[:JUDGE_RESPONSE_MAX_CHARS]
+
+    gt = (prompt_obj.get("ground_truth") or "").strip()
+    parts = [f"Prompt: {prompt_obj['prompt_text'][:JUDGE_PROMPT_MAX_CHARS]}"]
+    if gt:
+        parts.append(f"Reference (ground truth for factuality grounding): {gt[:GROUND_TRUTH_MAX_CHARS]}")
+    parts.append(f"Response: {response_for_judge}")
+    return "\n\n".join(parts), response_truncated
+
+
 def run_model(prompt_text: str, model: str) -> CallResult:
     """Send prompt_text to an evaluator model via call_model."""
     messages = [
@@ -123,15 +142,8 @@ def score_response(prompt_obj: dict, response_text: str) -> dict:
 
     Note: headline overall_applicable is computed in leaderboard.py, not here.
     """
-    response_truncated = len(response_text) > JUDGE_RESPONSE_MAX_CHARS
-    response_for_judge = response_text[:JUDGE_RESPONSE_MAX_CHARS]
-
+    prompt_text, response_truncated = build_judge_user_message(prompt_obj, response_text)
     gt = (prompt_obj.get("ground_truth") or "").strip()
-    parts = [f"Prompt: {prompt_obj['prompt_text'][:JUDGE_PROMPT_MAX_CHARS]}"]
-    if gt:
-        parts.append(f"Reference (ground truth for factuality grounding): {gt[:GROUND_TRUTH_MAX_CHARS]}")
-    parts.append(f"Response: {response_for_judge}")
-    prompt_text = "\n\n".join(parts)
 
     messages = [
         {"role": "system", "content": JUDGE_SYSTEM_PROMPT},

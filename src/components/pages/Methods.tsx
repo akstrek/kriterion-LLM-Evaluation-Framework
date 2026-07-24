@@ -5,8 +5,8 @@ import { BottomRight } from "../layout/BottomRight";
 import { ScrollableZone } from "../layout/ScrollableZone";
 import { ExpandableViz } from "../layout/ExpandableViz";
 import promptSuite from "../../../prompts/prompt_suite.json";
-import { loadJudgeCalibration } from "../../lib/loadCsv";
-import { JudgeCalibrationRow } from "../../types";
+import { loadJudgeCalibration, loadJudgeAgreement } from "../../lib/loadCsv";
+import { JudgeCalibrationRow, JudgeAgreementRow } from "../../types";
 
 // Mirror of config/llm.py — keep in sync.
 const JUDGE_MODEL = "nvidia/nemotron-3-super-120b-a12b:free";
@@ -64,9 +64,11 @@ const labelClass =
 
 export function Methods() {
   const [calibration, setCalibration] = useState<JudgeCalibrationRow[]>([]);
+  const [agreement, setAgreement] = useState<JudgeAgreementRow[]>([]);
 
   useEffect(() => {
     loadJudgeCalibration().then(setCalibration);
+    loadJudgeAgreement().then(setAgreement);
   }, []);
 
   return (
@@ -218,6 +220,47 @@ export function Methods() {
                       </p>
                     )}
                   </div>
+                  <div>
+                    <p className={labelClass}>Inter-Judge Agreement</p>
+                    {agreement.length ? (
+                      <>
+                        <p className={`${bodyClass} mb-3`}>
+                          A second, architecturally-independent judge re-scores a deterministic ~17% sample
+                          (300 pairs) of stored responses. Pearson r and MAE are computed only where both
+                          judges returned a score; "n/a" means the sample had too little score variance for
+                          a correlation to be defined, so % within one rubric-anchor step (±0.25) is the more
+                          reliable read there.
+                        </p>
+                        <div className="grid grid-cols-[1fr_60px_60px_90px] gap-x-4 gap-y-1">
+                          <div className={`${labelClass} mb-0`}>Dimension</div>
+                          <div className={`${labelClass} mb-0`}>n</div>
+                          <div className={`${labelClass} mb-0`}>r</div>
+                          <div className={`${labelClass} mb-0`}>Within 1 step</div>
+                          {agreement.map((row) => (
+                            <div key={row.dim} className="contents">
+                              <div className="text-[#F5F0E8] text-[12px] border-t border-white/10 pt-1">
+                                {row.dim === "overall" ? "Overall" : titleCase(row.dim)}
+                              </div>
+                              <div className="text-[#C8C2B8] text-[12px] font-mono border-t border-white/10 pt-1">
+                                {row.n}
+                              </div>
+                              <div className="text-[#C8C2B8] text-[12px] font-mono border-t border-white/10 pt-1">
+                                {row.pearsonR !== undefined ? row.pearsonR.toFixed(2) : "n/a"}
+                              </div>
+                              <div className="text-[#C8C2B8] text-[12px] font-mono border-t border-white/10 pt-1">
+                                {(row.pctWithinOneStep * 100).toFixed(0)}%
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    ) : (
+                      <p className={bodyClass}>
+                        A single judge model may exhibit same-family scoring bias (Zheng et al. 2023). A
+                        second-judge agreement sample is planned but not yet run — see Known Limitations.
+                      </p>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -226,9 +269,16 @@ export function Methods() {
                 <h3 className={headingClass}>Known Limitations</h3>
                 <ul className="list-disc pl-4 space-y-2 text-[#C8C2B8] text-[12px] marker:text-[#F5F0E8] leading-relaxed">
                   <li>
-                    <span className="text-[#F5F0E8]">Single judge model.</span> Nemotron-as-judge may
-                    exhibit same-family scoring bias (Zheng et al. 2023). A second judge model with
-                    inter-judge agreement reporting would strengthen validity.
+                    <span className="text-[#F5F0E8]">Single primary judge.</span> Nemotron-as-judge may
+                    exhibit same-family scoring bias (Zheng et al. 2023).{" "}
+                    {agreement.length ? (
+                      <>Inter-judge agreement is now measured on a 300-pair sample against an
+                      architecturally-independent second judge (see Statistical Validity above);
+                      headline scores still come from the primary judge only.</>
+                    ) : (
+                      <>A second judge model with inter-judge agreement reporting would strengthen
+                      validity — not yet run.</>
+                    )}
                   </li>
                   <li>
                     <span className="text-[#F5F0E8]">No human validation.</span> Inter-rater reliability

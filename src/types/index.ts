@@ -45,3 +45,14 @@ export interface JudgeCalibrationRow {
   testRetestStd: number;
   nParseFailures: number;
 }
+
+export interface JudgeAgreementRow {
+  dim: string;
+  n: number;
+  pearsonR?: number;
+  mae: number;
+  pctWithinOneStep: number;
+  nJudge1NanJudge2Val: number;
+  nJudge2NanJudge1Val: number;
+  nFallbackScored: number;
+}

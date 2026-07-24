@@ -6,7 +6,8 @@ Public surface:
     call_model(model_id, messages, role) -> CallResult
     htb_status() -> dict
     CallResult dataclass
-    EVALUATOR_MODELS, JUDGE_MODEL, EVALUATOR_SYSTEM_PROMPT, JUDGE_SYSTEM_PROMPT, RUBRIC_VERSION
+    EVALUATOR_MODELS, JUDGE_MODEL, JUDGE2_MODEL, JUDGE2_FALLBACK,
+    EVALUATOR_SYSTEM_PROMPT, JUDGE_SYSTEM_PROMPT, RUBRIC_VERSION
     DailyQuotaExhausted exception
     OPENROUTER_API_KEY (for downstream credit-check helpers)
 
@@ -47,6 +48,17 @@ if not OPENROUTER_API_KEY:
 JUDGE_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
 RUBRIC_VERSION = 2
 
+# Second judge (see PLAN-multi-judge-ensemble.md): re-scores an offline sample
+# for inter-judge agreement reporting. Never used for headline scoring — only
+# via second_judge.py, role="judge2". Poolside is architecturally distinct
+# from nvidia (judge 1) and openai/moonshotai/google (evaluators), so it can
+# detect same-family bias and its quota doesn't collide with evaluator lanes.
+# As of the last roster check (see PLAN-multi-judge-ensemble.md design
+# decision 1), no Qwen/DeepSeek/Llama :free model was available on OpenRouter
+# — Poolside's Laguna family was the best fit with a same-family fallback.
+JUDGE2_MODEL = "poolside/laguna-m.1:free"
+JUDGE2_FALLBACK = "poolside/laguna-s-2.1:free"
+
 EVALUATOR_MODELS = [
     "moonshotai/kimi-k2.6:free",
     "google/gemma-4-31b-it:free",
@@ -59,6 +71,7 @@ FALLBACK_MAP: dict[str, str] = {
     "google/gemma-4-31b-it:free":               "openai/gpt-oss-20b:free",
     "openai/gpt-oss-120b:free":                 "google/gemma-4-31b-it:free",
     "nvidia/nemotron-3-super-120b-a12b:free":   "nvidia/nemotron-3-nano-30b-a3b:free",
+    "poolside/laguna-m.1:free":                 "poolside/laguna-s-2.1:free",
 }
 
 
@@ -73,7 +86,7 @@ def _assert_free_only(models: list[str]) -> None:
 
 _assert_free_only(
     EVALUATOR_MODELS
-    + [JUDGE_MODEL]
+    + [JUDGE_MODEL, JUDGE2_MODEL, JUDGE2_FALLBACK]
     + list(FALLBACK_MAP.keys())
     + list(FALLBACK_MAP.values())
 )
@@ -131,11 +144,15 @@ class DailyQuotaExhausted(Exception):
 # gpt-oss-120b -> gemma-4-31b) land on google's leaf, so it needs headroom
 # for its own primary calls + inbound fallback traffic.
 # nvidia is judge-only; its budget comes from _JUDGE_RPD, not this split.
+# poolside is judge2-only (second_judge.py); its budget comes from
+# _JUDGE2_RPD, not this split — both JUDGE2_MODEL and JUDGE2_FALLBACK share
+# this one leaf, so no separate fallback budget is needed.
 _PROVIDER_RATES: dict[str, float] = {
     "nvidia":     0.10,
     "openai":     0.05,
     "moonshotai": 0.05,
     "google":     0.10,
+    "poolside":   0.05,
 }
 
 _ROOT_RATE      = 0.3      # 18 RPM (steady-state refill)
@@ -144,9 +161,14 @@ _NODE_BURST     = 2.0      # bucket capacity in permits. Kept low so a post-idle
                            # burst can't push the root over OpenRouter's 20 RPM
                            # free-tier ceiling: peak/60s ≈ 2 + 0.3*58 ≈ 19.4 < 20.
 _THROTTLED_RATE = 0.15
-_ROOT_RPD       = 950
+# 950 (main eval + judge1) + 350 (judge2, see below) = 1300. Confirmed with
+# the account owner that the OpenRouter free-tier daily cap is 1000/day (the
+# account has purchased >=10 credits, which lifts the cap from 50/day) —
+# raising root here reflects that account-level ceiling, not a guess.
+_ROOT_RPD       = 1300
 _EVAL_RPD       = 650
 _JUDGE_RPD      = 300
+_JUDGE2_RPD     = 350   # 300 sample calls (see PLAN-multi-judge-ensemble.md) + retry headroom
 
 _EVAL_PROVIDERS = ("openai", "moonshotai", "google")
 
@@ -224,6 +246,7 @@ class HTBTree:
         eval_budgets = _split_eval_budget()
         provider_budgets = dict(eval_budgets)
         provider_budgets["nvidia"] = _JUDGE_RPD     # nvidia is judge-only
+        provider_budgets["poolside"] = _JUDGE2_RPD  # poolside is judge2-only
 
         self.providers: dict[str, HTBNode] = {}
         for name, rate in _PROVIDER_RATES.items():
@@ -513,7 +536,7 @@ def _attempt_one(model_id: str, messages: list, *, tree: HTBTree = _HTB,
 def call_model(
     model_id: str,
     messages: list,
-    role: Literal["evaluator", "judge"],
+    role: Literal["evaluator", "judge", "judge2"],
     *,
     tree: HTBTree = _HTB,
     throttle: AdaptiveThrottle = _THROTTLE,
@@ -532,8 +555,8 @@ def call_model(
     - Raises DailyQuotaExhausted if HTB reports any path daily-exhausted.
     """
     _assert_free_only([model_id])
-    if role not in ("evaluator", "judge"):
-        raise ValueError(f"role must be 'evaluator' or 'judge', got {role!r}")
+    if role not in ("evaluator", "judge", "judge2"):
+        raise ValueError(f"role must be 'evaluator', 'judge', or 'judge2', got {role!r}")
 
     last_exc: Exception | None = None
     retry_count = 0

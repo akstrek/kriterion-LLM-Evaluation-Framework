@@ -33,6 +33,7 @@ EVAL_RESULTS_PATH       = os.path.join("data", "eval_results.csv")
 LEADERBOARD_PATH        = os.path.join("data", "leaderboard.csv")
 LEADERBOARD_BY_DIFF_PATH = os.path.join("data", "leaderboard_by_difficulty.csv")
 JUDGE_CALIBRATION_PATH  = os.path.join("data", "judge_calibration.csv")
+JUDGE_AGREEMENT_PATH    = os.path.join("data", "judge_agreement.csv")
 PUBLIC_DATA_DIR         = os.path.join("public", "data")
 
 # Single source of truth pair: this list mirrors evaluator.EXPECTED_SCORE_KEYS.
@@ -293,7 +294,8 @@ def main() -> None:
     else:
         print("By-difficulty: skipped (no difficulty tags in input).")
 
-    _publish_to_public([LEADERBOARD_PATH, LEADERBOARD_BY_DIFF_PATH, JUDGE_CALIBRATION_PATH])
+    _publish_to_public([LEADERBOARD_PATH, LEADERBOARD_BY_DIFF_PATH, JUDGE_CALIBRATION_PATH,
+                         JUDGE_AGREEMENT_PATH])
     print_leaderboard(lb)
 
 

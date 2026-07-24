@@ -1,5 +1,5 @@
 import Papa from 'papaparse';
-import { ModelPerformance, ModelDifficultyRow, JudgeCalibrationRow } from '../types';
+import { ModelPerformance, ModelDifficultyRow, JudgeCalibrationRow, JudgeAgreementRow } from '../types';
 
 // FALLBACK_DATA is only used when the runtime CSV is missing or malformed —
 // e.g. local dev before the first eval run. Values are placeholders, not
@@ -133,6 +133,23 @@ function mapCalibrationRow(row: any): JudgeCalibrationRow | null {
   };
 }
 
+function mapAgreementRow(row: any): JudgeAgreementRow | null {
+  if (!row || !row.dim) return null;
+  const n = Number(row.n);
+  if (!Number.isFinite(n)) return null;
+  const pearsonR = Number(row.pearson_r);
+  return {
+    dim: String(row.dim),
+    n,
+    pearsonR: Number.isFinite(pearsonR) ? pearsonR : undefined,
+    mae: num(row.mae),
+    pctWithinOneStep: num(row.pct_within_one_step),
+    nJudge1NanJudge2Val: num(row.n_judge1_nan_judge2_val),
+    nJudge2NanJudge1Val: num(row.n_judge2_nan_judge1_val),
+    nFallbackScored: num(row.n_fallback_scored),
+  };
+}
+
 function mapDifficultyRow(row: any): ModelDifficultyRow | null {
   if (!row || !row.model || !row.difficulty) return null;
   const overall = Number(row.overall_applicable);
@@ -229,6 +246,34 @@ export async function loadJudgeCalibration(): Promise<JudgeCalibrationRow[]> {
           const mapped = (results.data as any[])
             .map(mapCalibrationRow)
             .filter((r): r is JudgeCalibrationRow => r !== null);
+          resolve(mapped);
+        },
+        error: () => resolve([]),
+      });
+    });
+  } catch {
+    return [];
+  }
+}
+
+export async function loadJudgeAgreement(): Promise<JudgeAgreementRow[]> {
+  try {
+    const res = await fetch('/data/judge_agreement.csv');
+    if (!res.ok) return [];
+
+    const contentType = res.headers.get('content-type');
+    if (contentType && contentType.includes('text/html')) return [];
+
+    const text = await res.text();
+    return new Promise((resolve) => {
+      Papa.parse(text, {
+        header: true,
+        dynamicTyping: true,
+        skipEmptyLines: true,
+        complete: (results) => {
+          const mapped = (results.data as any[])
+            .map(mapAgreementRow)
+            .filter((r): r is JudgeAgreementRow => r !== null);
           resolve(mapped);
         },
         error: () => resolve([]),
