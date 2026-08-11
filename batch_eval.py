@@ -39,6 +39,7 @@ from config.llm import (
 )
 from config.scheduler import EvalOrchestrator
 from evaluator import run_model, score_response
+from generate_prompts import CATEGORIES, TARGET_PER_TIER
 
 # Windows: default cp1252 stdout can't encode the box-drawing chars used in the
 # quota-exhaustion display blocks. PowerShell renders UTF-8 fine; this just
@@ -169,11 +170,83 @@ def save_state(state: dict) -> None:
 
 # ── Prompt I/O ─────────────────────────────────────────────────────────────────
 
+def validate_prompt_suite(prompts: list[dict]) -> None:
+    """Fail fast on a malformed prompt suite — before any quota is spent.
+
+    A bad suite (missing field, duplicate id, wrong stratification) used to
+    surface as a mid-run KeyError after quota was already burned, or worse,
+    silently skew stratified aggregation. Raises ValueError naming the
+    offending id/count; targets are sourced from generate_prompts.py's
+    CATEGORIES/TARGET_PER_TIER, not re-literaled here."""
+    target_per_category = sum(TARGET_PER_TIER.values())
+    target_total = len(CATEGORIES) * target_per_category
+
+    seen_ids: set[str] = set()
+    tier_counts: dict[str, dict[str, int]] = {
+        c: {t: 0 for t in TARGET_PER_TIER} for c in CATEGORIES
+    }
+
+    for i, p in enumerate(prompts):
+        pid = p.get("id")
+        if not pid or not isinstance(pid, str):
+            raise ValueError(f"Prompt at index {i} has a missing/empty 'id': {p!r}")
+        if pid in seen_ids:
+            raise ValueError(f"Duplicate prompt id: {pid!r}")
+        seen_ids.add(pid)
+
+        for field in ("prompt_text", "category", "difficulty"):
+            val = p.get(field)
+            if not val or not isinstance(val, str):
+                raise ValueError(f"Prompt {pid!r} has a missing/empty {field!r}")
+
+        if "ground_truth" not in p:
+            raise ValueError(
+                f"Prompt {pid!r} is missing the 'ground_truth' key "
+                "(an empty string is fine, but the key must be present)"
+            )
+
+        difficulty = p["difficulty"]
+        if difficulty not in TARGET_PER_TIER:
+            raise ValueError(
+                f"Prompt {pid!r} has invalid difficulty {difficulty!r}; "
+                f"must be one of {sorted(TARGET_PER_TIER)}"
+            )
+
+        category = p["category"]
+        if category not in CATEGORIES:
+            raise ValueError(
+                f"Prompt {pid!r} has unknown category {category!r}; "
+                f"must be one of {list(CATEGORIES)}"
+            )
+
+        tier_counts[category][difficulty] += 1
+
+    if len(prompts) != target_total:
+        raise ValueError(
+            f"Expected {target_total} prompts ({len(CATEGORIES)} categories x "
+            f"{target_per_category}), got {len(prompts)}"
+        )
+
+    for category in CATEGORIES:
+        for tier, want in TARGET_PER_TIER.items():
+            got = tier_counts[category][tier]
+            if got != want:
+                raise ValueError(
+                    f"Category {category!r} tier {tier!r} has {got} prompts, "
+                    f"expected {want}"
+                )
+
+
 def load_prompts() -> list[dict]:
     if not os.path.exists(PROMPT_SUITE_PATH):
         sys.exit(f"ERROR: {PROMPT_SUITE_PATH} not found. Run generate_prompts.py first.")
     with open(PROMPT_SUITE_PATH, encoding="utf-8") as f:
-        return json.load(f)
+        prompts = json.load(f)
+    try:
+        validate_prompt_suite(prompts)
+    except ValueError as exc:
+        sys.exit(f"ERROR: {PROMPT_SUITE_PATH} failed validation: {exc}")
+    return prompts
 
 
 # ── Parquet I/O ────────────────────────────────────────────────────────────────
