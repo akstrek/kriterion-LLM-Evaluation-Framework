@@ -20,3 +20,6 @@ __pycache__/
 public/data/
 .vercel
 .env*
+
+# Private project snapshot — personal use only, never published/committed.
+kriterion-project-summary.html

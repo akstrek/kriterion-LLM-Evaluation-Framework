@@ -444,30 +444,34 @@ export function Blog() {
               <div className="bg-white/[0.03] rounded-lg p-4 border border-white/[0.05]">
                 <p className="text-[10px] uppercase tracking-[0.15em] text-[#C8C2B8]/70 mb-3 font-medium">HTB tree, leaf width ∝ RPD share</p>
                 <div className="overflow-x-auto -mx-1">
-                <svg viewBox="0 0 480 130" preserveAspectRatio="xMidYMid meet" aria-hidden="true" className="min-w-[440px] w-full h-auto overflow-visible">
+                <svg viewBox="0 0 570 130" preserveAspectRatio="xMidYMid meet" aria-hidden="true" className="min-w-[500px] w-full h-auto overflow-visible">
                   {/* root */}
-                  <rect x="180" y="6" width="120" height="26" rx="6" fill="rgba(245,195,135,0.12)" stroke="rgba(245,195,135,0.45)" />
-                  <text x="240" y="23" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="11" fill="#F5C387">root · 950 RPD</text>
+                  <rect x="225" y="6" width="120" height="26" rx="6" fill="rgba(245,195,135,0.12)" stroke="rgba(245,195,135,0.45)" />
+                  <text x="285" y="23" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="11" fill="#F5C387">root · 1300 RPD</text>
                   {/* connectors */}
-                  <path d="M240 32 L240 50 M70 50 L410 50 M70 50 L70 64 M180 50 L180 64 M290 50 L290 64 M410 50 L410 64" stroke="rgba(245,240,232,0.25)" strokeWidth="1" fill="none" />
-                  {/* leaves — widths proportional to RPD: nvidia 300, openai 163, moonshotai 163, google 325 */}
-                  <rect x="14" y="64" width="112" height="26" rx="5" fill="rgba(245,240,232,0.05)" stroke="rgba(245,240,232,0.18)" />
-                  <text x="70" y="81" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="10" fill="#F5F0E8">nvidia · 300</text>
-                  <text x="70" y="106" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="9" fill="#C8C2B8">judge</text>
+                  <path d="M285 32 L285 50 M72.5 50 L476.5 50 M72.5 50 L72.5 64 M168.5 50 L168.5 64 M237.5 50 L237.5 64 M338.5 50 L338.5 64 M476.5 50 L476.5 64" stroke="rgba(245,240,232,0.25)" strokeWidth="1" fill="none" />
+                  {/* leaves — widths proportional to RPD: nvidia 300, openai 162, moonshotai 162, google 326, poolside 350 */}
+                  <rect x="14" y="64" width="117" height="26" rx="5" fill="rgba(245,240,232,0.05)" stroke="rgba(245,240,232,0.18)" />
+                  <text x="72.5" y="81" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="10" fill="#F5F0E8">nvidia · 300</text>
+                  <text x="72.5" y="106" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="9" fill="#C8C2B8">judge</text>
 
-                  <rect x="119" y="64" width="61" height="26" rx="5" fill="rgba(245,240,232,0.05)" stroke="rgba(245,240,232,0.18)" />
-                  <text x="150" y="81" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="10" fill="#F5F0E8">openai · 163</text>
-                  <text x="150" y="106" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="9" fill="#C8C2B8">gpt-oss</text>
+                  <rect x="137" y="64" width="63" height="26" rx="5" fill="rgba(245,240,232,0.05)" stroke="rgba(245,240,232,0.18)" />
+                  <text x="168.5" y="81" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="10" fill="#F5F0E8">openai · 162</text>
+                  <text x="168.5" y="106" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="9" fill="#C8C2B8">gpt-oss</text>
 
-                  <rect x="229" y="64" width="61" height="26" rx="5" fill="rgba(245,240,232,0.05)" stroke="rgba(245,240,232,0.18)" />
-                  <text x="260" y="81" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="10" fill="#F5F0E8">moon · 163</text>
-                  <text x="260" y="106" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="9" fill="#C8C2B8">kimi</text>
+                  <rect x="206" y="64" width="63" height="26" rx="5" fill="rgba(245,240,232,0.05)" stroke="rgba(245,240,232,0.18)" />
+                  <text x="237.5" y="81" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="10" fill="#F5F0E8">moon · 162</text>
+                  <text x="237.5" y="106" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="9" fill="#C8C2B8">kimi</text>
 
-                  <rect x="289" y="64" width="121" height="26" rx="5" fill="rgba(245,240,232,0.05)" stroke="rgba(245,240,232,0.18)" />
-                  <text x="349" y="81" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="10" fill="#F5F0E8">google · 325</text>
-                  <text x="349" y="106" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="9" fill="#C8C2B8">gemma + landing pad</text>
+                  <rect x="275" y="64" width="127" height="26" rx="5" fill="rgba(245,240,232,0.05)" stroke="rgba(245,240,232,0.18)" />
+                  <text x="338.5" y="81" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="10" fill="#F5F0E8">google · 326</text>
+                  <text x="338.5" y="106" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="9" fill="#C8C2B8">gemma + landing pad</text>
 
-                  <text x="240" y="126" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="9" fill="rgba(200,194,184,0.6)">idle siblings lend tokens up to root</text>
+                  <rect x="408" y="64" width="137" height="26" rx="5" fill="rgba(245,240,232,0.05)" stroke="rgba(245,240,232,0.18)" />
+                  <text x="476.5" y="81" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="10" fill="#F5F0E8">poolside · 350</text>
+                  <text x="476.5" y="106" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="9" fill="#C8C2B8">judge2 · pending run</text>
+
+                  <text x="285" y="126" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="9" fill="rgba(200,194,184,0.6)">idle siblings lend tokens up to root</text>
                 </svg>
                 </div>
               </div>
@@ -476,7 +480,7 @@ export function Blog() {
                 {[
                   { pill: "HTB",     cite: "Devera, 2002",                text: "Hierarchical Token Bucket. Root quota refills continuously; providers borrow when siblings idle." },
                   { pill: "DRR",     cite: "Shreedhar & Varghese, 1996",  text: "Deficit Round Robin schedules per-model fairness; throttled lanes never starve siblings." },
-                  { pill: "Split",   cite: "650 + 300 RPD",               text: "Judge and evaluator hold separate guaranteed shares of the daily quota." },
+                  { pill: "Split",   cite: "650 + 300 + 350 RPD",         text: "Evaluator, judge, and a second architecturally-independent judge (for offline inter-judge agreement, not yet run) each hold separate guaranteed shares of the daily quota." },
                   { pill: "Backoff", cite: "TCP-style",                   text: "429-burst halves root rate for a 5-minute cooldown, then restores automatically." },
                 ].map((b) => (
                   <div key={b.pill} className="flex items-start gap-3 bg-white/[0.03] rounded-lg p-3 border border-white/[0.05]">
@@ -757,17 +761,29 @@ null example: {"factuality":null,"reasoning":null,"instruction_following":0.85,"
             <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5 mb-3">
               <p className="text-[10px] uppercase tracking-[0.2em] text-[#C8C2B8] mb-3 font-medium">Hierarchical Token Bucket</p>
               <p className="text-[#C8C2B8] text-[13px] leading-relaxed mb-4">
-                The Linux <span className="font-mono text-[#F5F0E8]">tc qdisc htb</span> primitive (Devera, 2002), applied to the OpenRouter quota. A root node holds the 18 RPM / 950 RPD ceiling. Provider leaves carry guaranteed shares: eval gets 650 RPD split across moonshotai, google, and openai; judge gets 300 RPD on nvidia. An idle sibling's tokens are borrowed up to the root cap (full HTB borrow semantics), so no leaf starves while another sits idle.
+                The Linux <span className="font-mono text-[#F5F0E8]">tc qdisc htb</span> primitive (Devera, 2002), applied to the OpenRouter quota. A root node holds the 18 RPM / 1,300 RPD ceiling — 950 for the main pipeline plus 350 reserved for an offline second-judge agreement sample (not yet run for real; see Methods). Provider leaves carry guaranteed shares: eval gets 650 RPD split across moonshotai, google, and openai; judge gets 300 RPD on nvidia; the second judge gets 350 RPD on a fifth, architecturally-independent provider (poolside). An idle sibling's tokens are borrowed up to the root cap (full HTB borrow semantics), so no leaf starves while another sits idle.
               </p>
               <pre className="bg-white/[0.03] rounded-lg p-3 border border-white/[0.05] text-[11px] text-[#C8C2B8] font-mono leading-relaxed overflow-x-auto">
-{`root         18 RPM,  950 RPD       ← OpenRouter ceiling
+{`root         18 RPM, 1300 RPD       ← OpenRouter ceiling (950 main + 350 judge2)
  ├── nvidia       300 RPD            ← judge
- ├── openai       163 RPD            ← gpt-oss-120b
- ├── moonshotai   163 RPD            ← kimi-k2.6
- └── google       325 RPD            ← gemma + fallback landing pad
+ ├── openai       162 RPD            ← gpt-oss-120b
+ ├── moonshotai   162 RPD            ← kimi-k2.6
+ ├── google       326 RPD            ← gemma + fallback landing pad
+ └── poolside     350 RPD            ← judge2, second_judge.py (pending run)
 
 borrow: any leaf may consume idle siblings' tokens up to root`}
               </pre>
+            </div>
+
+            {/* Advisory weight retune — closes the "hand-set, not learned" gap */}
+            <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5 mb-3">
+              <div className="flex flex-wrap items-center gap-2 mb-3">
+                <p className="text-[10px] uppercase tracking-[0.2em] text-[#C8C2B8] font-medium">Advisory Weight Retune</p>
+                <span className="inline-block px-2 py-0.5 rounded-md bg-[#C8873A]/20 border border-[#C8873A]/40 text-[#F5C387] text-[9px] uppercase tracking-[0.15em] font-mono">latest revision</span>
+              </div>
+              <p className="text-[#C8C2B8] text-[13px] leading-relaxed">
+                The provider leaf weights above were hand-set from intuition (google carries double weight because two other lanes' fallbacks land there). <span className="font-mono text-[#F5F0E8]">retune_weights.py</span> now closes that gap: it reads observed fallback rates from <span className="font-mono text-[#E8DFD2]">eval_results.parquet</span> — routed through the live <span className="font-mono text-[#E8DFD2]">FALLBACK_MAP</span>, since the parquet's model column always records the <span className="italic">requested</span> id, never the one that actually served the call — plus 429 pressure from <span className="font-mono text-[#E8DFD2]">failed_calls.json</span>, and prints a proposed <span className="font-mono text-[#E8DFD2]">_PROVIDER_RATES</span> dict next to the current one. It never writes <span className="font-mono text-[#E8DFD2]">config/llm.py</span> — a human reads the proposal and applies the diff, the same discipline as every other quota decision in this pipeline.
+              </p>
             </div>
 
             <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5 mb-3">
@@ -791,6 +807,10 @@ borrow: any leaf may consume idle siblings' tokens up to root`}
                 {
                   label: "Quota-Aware Self-Pacing",
                   body: (<>On quota exhaustion the runner stays in-process and sleeps to the next 00:01 UTC reset, polling every 5 min so it survives Windows suspend/resume. No external scheduler, no respawn.</>),
+                },
+                {
+                  label: "Fail-Fast + Log Rotation",
+                  body: (<>The prompt suite is validated (required fields, unique ids, exact 600 / 6×100 / 15-25-35-25 stratification) before a single call is made, not discovered mid-run via <span className="font-mono text-[#F5F0E8]">KeyError</span> after quota is already burned. <span className="font-mono text-[#F5F0E8]">failed_calls.json</span>, append-only and never trimmed, now rotates to a dated file at the start of a fresh run (never mid-resume), so cross-run history stops diluting the retune signal above.</>),
                 },
               ].map((row, i, arr) => (
                 <div
@@ -886,7 +906,14 @@ for pass in range(4):                 # SWEEP_MAX_PASSES
               </div>
               <p className="text-[#C8C2B8] text-[12px] leading-relaxed mt-4 pt-4 border-t border-white/[0.06]">
                 <span className="text-[#F5F0E8] text-[11px] uppercase tracking-wider font-medium">Empty-judge handling  </span>
-                When the judge returns an unparseable response, all five dimensions become NaN and <span className="font-mono">judge_empty=True</span> is recorded on the row. Previously, two of the dimensions defaulted to 0.0, a silent downward bias in the leaderboard. Calibration probes (HELM-style anchor responses) are noted as future work.
+                When the judge returns an unparseable response, all five dimensions become NaN and <span className="font-mono">judge_empty=True</span> is recorded on the row. Previously, two of the dimensions defaulted to 0.0, a silent downward bias in the leaderboard. A 32-probe judge calibration suite (anchor prompt/response pairs with known-quality score bands, 3 repeats each) is implemented and tested; the real pass against the judge — and a second, architecturally-independent judge scoring a 300-pair sample for inter-judge agreement — are both wired into the HTB tree above but not yet run for real. See Methods for current status.
+              </p>
+            </div>
+
+            <div className="bg-[rgba(10,8,6,0.72)] backdrop-blur-2xl rounded-2xl border border-white/[0.06] p-5 mt-4">
+              <p className="text-[10px] uppercase tracking-[0.2em] text-[#C8C2B8] mb-2 font-medium">Per-prompt Explorer</p>
+              <p className="text-[#C8C2B8] text-[13px] leading-relaxed">
+                The two leaderboard CSVs are aggregates; the interesting texture — which specific prompts separate the models, where the judge NaN'd, which categories break at the expert tier — was sitting unexported in the 1,800 already-scored rows. A companion <span className="font-mono text-[#F5F0E8]">results_by_prompt.csv</span> export and an <span className="font-mono text-[#F5F0E8]">/explorer</span> page surface it directly: filterable by category and difficulty, sorted by inter-model disagreement (spread) by default, with expandable rows showing prompt text, ground truth, and the full 3-model × 5-dim score grid. Zero additional API cost — built entirely from data the pipeline already had.
               </p>
             </div>
           </motion.div>
@@ -912,7 +939,7 @@ for pass in range(4):                 # SWEEP_MAX_PASSES
                   n: "02",
                   title: "Pinned Where Possible",
                   blogPost: "LLM judges every cell",
-                  benchmark: "The prompt suite, judge model id, and system prompt are version-pinned; the judge returns a fixed 5-key JSON schema. Reproducibility comes from pinning the inputs, not from a separate deterministic parser layer.",
+                  benchmark: "The prompt suite, judge model id, and system prompt are version-pinned; the judge returns a fixed 5-key JSON schema. Reproducibility comes from pinning the inputs, not from a separate deterministic parser layer. A test asserts byte-for-byte parity between the Python rubric and its hand-mirrored copy on the Methods page, so the public methodology text can't silently drift from the rubric actually driving the judge.",
                 },
                 {
                   n: "03",

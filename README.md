@@ -23,6 +23,8 @@
 
 Kriterion mirrors the kind of systematic, auto-scored evaluation work done by evals teams at frontier labs, reproduced end-to-end on free-tier infrastructure. It scores three open-weight evaluators (Moonshot Kimi K2.6, Google Gemma 4 31B IT, OpenAI GPT-OSS 120B) against 600 prompts across 6 categories, with NVIDIA Nemotron 3 Super 120B as an architecturally independent judge. That is 600 prompts × 3 evaluators = 1,800 evaluated pairs, each tagged easy / medium / hard / expert so model separation is visible at the top tier. Every score and chart is generated from real eval runs, not synthetic data. The most differentiating decision is in the runtime: a Hierarchical Token Bucket scheduler treats multi-provider rate limits as a bandwidth-shaping problem, so the entire pipeline self-paces through quota exhaustion without any OS-level scheduling, and a bounded patient multi-pass sweep drives the transient-429 tail to zero without manual re-runs.
 
+Beyond the headline leaderboard, a per-prompt `/explorer` page surfaces all 1,800 already-scored rows individually — filterable, sortable by inter-model disagreement, with expandable prompt/ground-truth/score-grid detail — and the pipeline is hardening toward self-checking: fail-fast prompt-suite validation before quota is spent, a test that guards the public Methods page against silently drifting from the actual judge rubric, and an advisory (never auto-applied) script that recomputes HTB provider weights from observed demand and 429 pressure instead of hand-tuning.
+
 Architecture deep dive → [Blog](https://kriterion-eight.vercel.app/blog) · Scoring methodology → [Methods](https://kriterion-eight.vercel.app/methods)
 
 ---
@@ -35,12 +37,14 @@ Architecture deep dive → [Blog](https://kriterion-eight.vercel.app/blog) · Sc
 prompts/prompt_suite.json   (600 prompts × 6 categories, difficulty-tagged)
             │
             ▼
-       batch_eval.py ──── HTB Scheduler   root: 0.3 req/s · 950 RPD
+       batch_eval.py ──── HTB Scheduler   root: 0.3 req/s · 1300 RPD
             │                  │          ├── nvidia    300 RPD (judge)
-            │             DRR Pair         ├── google   325 RPD
-            │             Selector         ├── moonshot 163 RPD
-            │                  │           └── openai   163 RPD
+            │             DRR Pair         ├── google   326 RPD
+            │             Selector         ├── moonshot 162 RPD
+            │                  │           ├── openai   162 RPD
+            │                  │           └── poolside 350 RPD (judge2, pending run)
             │             Patient multi-pass sweep (transient-429 tail → 0)
+            │             Fail-fast prompt-suite validation (before quota spend)
             ▼                  ▼
        evaluator.py ◄──── config/llm.py    fallback routing per provider
        (3 workers)        adaptive throttle (halves rate on 429>30%)
@@ -69,6 +73,9 @@ prompts/prompt_suite.json   (600 prompts × 6 categories, difficulty-tagged)
 | Adaptive throttle | Halve root rate to 0.15/s for 300s when trailing 429-rate > 30% | Backs off automatically when a provider degrades, restores on cooldown. |
 | Retry-After-aware backoff | Honor server `Retry-After` / `X-RateLimit-Reset`, else full-jitter exponential; only 429 / 5xx / timeouts retried | Wastes no daily-quota units on un-retryable 4xx; spreads worker retries so they don't re-sync. |
 | Patient multi-pass sweep | Bounded outer loop in `batch_eval.main`: re-run remaining pairs with widening gaps (5 / 15 / 30 min, 4 passes) | Transient upstream 429s need *time between attempts*, not just a retry; this drains the ~4% tail without manual re-runs. |
+| Fail-fast prompt validation | `validate_prompt_suite()` checks required fields, unique ids, and exact 600 / 6×100 / 15-25-35-25 stratification before any call | A malformed suite previously surfaced as a mid-run `KeyError` — after quota was already spent. |
+| Failed-call log rotation | `failed_calls.json` (append-only, never trimmed) archives to a dated file at the start of a fresh run only, never on resume | Unbounded cross-run history was diluting the retune script's 429-pressure signal. |
+| Advisory weight retune | `retune_weights.py`: proposed `_PROVIDER_RATES` from observed fallback demand + 429 pressure, printed next to current | Read-only — never edits `config/llm.py`. A human applies the diff; auto-editing live quota config from historical logs is how you get a self-inflicted outage. |
 
 Full architecture story → [Blog](https://kriterion-eight.vercel.app/blog) · Infrastructure details → [Methods](https://kriterion-eight.vercel.app/methods)
 
@@ -84,7 +91,7 @@ Full architecture story → [Blog](https://kriterion-eight.vercel.app/blog) · I
 ![Recharts 3](https://img.shields.io/badge/Recharts-3.8-22B5BF?style=flat)
 ![Router 7](https://img.shields.io/badge/React_Router-7.14-CA4245?style=flat&logo=reactrouter&logoColor=white)
 
-Fixed `PageFrame` + interior `ScrollableZone` give a cinematic outer frame; `GrainOverlay` adds procedural SVG film grain; `AnimatePresence` crossfades between lazy-loaded routes (`/`, `/rankings`, `/dimensions`, `/methods`, `/blog`); data arrives as a static CSV parsed at runtime with Papa Parse — no API server.
+Fixed `PageFrame` + interior `ScrollableZone` give a cinematic outer frame; `GrainOverlay` adds procedural SVG film grain; `AnimatePresence` crossfades between lazy-loaded routes (`/`, `/rankings`, `/dimensions`, `/explorer`, `/methods`, `/blog`); data arrives as static CSVs parsed at runtime with Papa Parse — no API server. `/explorer` renders all 1,800 per-(prompt, model) rows individually — filterable by category/difficulty, sorted by inter-model disagreement by default, expandable to prompt text, ground truth, and the full score grid.
 
 ![Kriterion Dashboard](./docs/screenshots/overview.png)
 
@@ -178,8 +185,8 @@ Loads `public/data/leaderboard.csv`. Falls back to a small embedded demo dataset
 
 ## ⚠️ Known Limitations
 
-- **Single judge model** — same-family scoring bias is possible (Zheng et al., 2023). No multi-judge ensemble yet.
-- **No human-rater validation sample** — inter-rater reliability with the judge is unknown.
+- **Single judge model in production** — same-family scoring bias is possible (Zheng et al., 2023). A second, architecturally independent judge for inter-judge agreement measurement is implemented (`second_judge.py`, deterministic 300-pair sample, own HTB lane) but not yet run for real — blocked on the schema-v2 re-run below.
+- **No human-rater validation sample** — inter-rater reliability with the judge is unknown. A 32-probe judge calibration suite (known-quality anchor pairs, 3 repeats each) is implemented and tested but not yet run for real.
 - **Response truncation** — evaluator responses are truncated to ~1,500 characters before judge scoring. (fixed in pipeline v2 — cap raised to 4,000 chars with a recorded truncation flag; pending re-run)
 - **Free-tier variability** — provider availability and latency shift through the day; the adaptive throttle dampens but doesn't eliminate this.
 - **Gemma 4 31B dual role** — serves as Evaluator 2 *and* as fallback for Evaluator 3, creating single-provider risk if Google's free tier degrades.
@@ -199,21 +206,26 @@ No license file specified in this repository.
 
 ```
 kriterion/
-├── batch_eval.py            # Orchestrator: HTB + DRR + worker threads + quota sleep
+├── batch_eval.py            # Orchestrator: HTB + DRR + worker threads + quota sleep; fail-fast prompt validation + failed_calls.json rotation
 ├── evaluator.py             # run_model() + score_response() (judge call)
-├── leaderboard.py           # Two-score aggregation + bootstrap CI
+├── leaderboard.py           # Two-score aggregation + bootstrap CI + per-prompt export
 ├── generate_prompts.py      # Prompt suite generator
+├── calibration_probes.py    # Judge reliability: 32 anchor probes × 3 repeats
+├── second_judge.py          # Offline 2nd-judge re-scoring for inter-judge agreement
+├── retune_weights.py        # Advisory HTB weight recompute (read-only)
 ├── config/
 │   ├── llm.py               # Models, HTB tree, adaptive throttle, system prompts
 │   └── scheduler.py         # DRR scheduler + quota-sleep loop
 ├── prompts/prompt_suite.json
+├── tests/                   # pytest suite — zero real API calls
 ├── data/
 │   ├── rows/                # Per-row atomic parquet checkpoints
 │   ├── eval_results.parquet
-│   └── leaderboard.csv
-├── public/data/leaderboard.csv   # Static CSV consumed by the dashboard
+│   ├── leaderboard.csv
+│   └── results_by_prompt.csv     # Per-(prompt, model) export behind /explorer
+├── public/data/leaderboard.csv   # Static CSVs consumed by the dashboard
 ├── src/
-│   ├── components/{charts,layout,pages}/
+│   ├── components/{charts,layout,pages}/   # pages: Overview, Rankings, Dimensions, Explorer, Methods, Blog
 │   └── lib/loadCsv.ts
 ├── architecture.md
 └── requirements.txt
