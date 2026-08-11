@@ -1,5 +1,5 @@
 import Papa from 'papaparse';
-import { ModelPerformance, ModelDifficultyRow, JudgeCalibrationRow, JudgeAgreementRow } from '../types';
+import { ModelPerformance, ModelDifficultyRow, JudgeCalibrationRow, JudgeAgreementRow, PromptResultRow } from '../types';
 
 // FALLBACK_DATA is only used when the runtime CSV is missing or malformed —
 // e.g. local dev before the first eval run. Values are placeholders, not
@@ -274,6 +274,68 @@ export async function loadJudgeAgreement(): Promise<JudgeAgreementRow[]> {
           const mapped = (results.data as any[])
             .map(mapAgreementRow)
             .filter((r): r is JudgeAgreementRow => r !== null);
+          resolve(mapped);
+        },
+        error: () => resolve([]),
+      });
+    });
+  } catch {
+    return [];
+  }
+}
+
+// Empty CSV cells arrive from PapaParse (dynamicTyping) as null or "" — normalize
+// both to null explicitly. Never coerce a missing/NaN dim to 0: "not applicable"
+// and "catastrophic failure" must stay visually distinct downstream.
+function nullableNum(v: unknown): number | null {
+  if (v === "" || v === null || v === undefined) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+// pandas writes bool columns as the strings "True"/"False"; PapaParse's
+// dynamicTyping only auto-types numbers, not these — map explicitly.
+function bool(v: unknown): boolean {
+  return v === true || v === "True" || v === "true";
+}
+
+function mapPromptResultRow(row: any): PromptResultRow | null {
+  if (!row || !row.prompt_id || !row.model) return null;
+  return {
+    promptId: String(row.prompt_id),
+    category: String(row.category ?? "unknown"),
+    difficulty: (String(row.difficulty ?? "easy") as PromptResultRow["difficulty"]),
+    model: String(row.model),
+    factuality: nullableNum(row.factuality),
+    reasoning: nullableNum(row.reasoning),
+    instructionFollowing: nullableNum(row.instruction_following),
+    formatCompliance: nullableNum(row.format_compliance),
+    verbosity: nullableNum(row.verbosity),
+    overall: nullableNum(row.overall_applicable_row),
+    judgeEmpty: bool(row.judge_empty),
+    fallbackTriggered: bool(row.fallback_triggered),
+    latencyMs: num(row.latency_ms),
+  };
+}
+
+export async function loadResultsByPrompt(): Promise<PromptResultRow[]> {
+  try {
+    const res = await fetch('/data/results_by_prompt.csv');
+    if (!res.ok) return [];
+
+    const contentType = res.headers.get('content-type');
+    if (contentType && contentType.includes('text/html')) return [];
+
+    const text = await res.text();
+    return new Promise((resolve) => {
+      Papa.parse(text, {
+        header: true,
+        dynamicTyping: true,
+        skipEmptyLines: true,
+        complete: (results) => {
+          const mapped = (results.data as any[])
+            .map(mapPromptResultRow)
+            .filter((r): r is PromptResultRow => r !== null);
           resolve(mapped);
         },
         error: () => resolve([]),

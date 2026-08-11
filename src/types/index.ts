@@ -56,3 +56,19 @@ export interface JudgeAgreementRow {
   nJudge2NanJudge1Val: number;
   nFallbackScored: number;
 }
+
+export interface PromptResultRow {
+  promptId: string;
+  category: string;
+  difficulty: "easy" | "medium" | "hard" | "expert";
+  model: string;
+  factuality: number | null;
+  reasoning: number | null;
+  instructionFollowing: number | null;
+  formatCompliance: number | null;
+  verbosity: number | null;
+  overall: number | null;
+  judgeEmpty: boolean;
+  fallbackTriggered: boolean;
+  latencyMs: number;
+}

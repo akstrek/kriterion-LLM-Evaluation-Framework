@@ -34,6 +34,8 @@ LEADERBOARD_PATH        = os.path.join("data", "leaderboard.csv")
 LEADERBOARD_BY_DIFF_PATH = os.path.join("data", "leaderboard_by_difficulty.csv")
 JUDGE_CALIBRATION_PATH  = os.path.join("data", "judge_calibration.csv")
 JUDGE_AGREEMENT_PATH    = os.path.join("data", "judge_agreement.csv")
+RESULTS_BY_PROMPT_PATH  = os.path.join("data", "results_by_prompt.csv")
+PROMPTS_PATH            = os.path.join("prompts", "prompt_suite.json")
 PUBLIC_DATA_DIR         = os.path.join("public", "data")
 
 # Single source of truth pair: this list mirrors evaluator.EXPECTED_SCORE_KEYS.
@@ -94,10 +96,9 @@ def load_prompts_metadata() -> tuple[dict[str, str], dict[str, str]]:
     Falls back to empty dicts if prompt_suite.json is missing; downstream
     aggregations skip stratified outputs when difficulty is unknown.
     """
-    path = os.path.join("prompts", "prompt_suite.json")
-    if not os.path.exists(path):
+    if not os.path.exists(PROMPTS_PATH):
         return {}, {}
-    with open(path, encoding="utf-8") as f:
+    with open(PROMPTS_PATH, encoding="utf-8") as f:
         prompts = json.load(f)
     cat_map = {p["id"]: p["category"] for p in prompts}
     diff_map = {p["id"]: p.get("difficulty", "") for p in prompts}
@@ -249,6 +250,46 @@ def compute_leaderboard_by_difficulty(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def export_by_prompt(df: pd.DataFrame, prompts_path: str = PROMPTS_PATH) -> pd.DataFrame:
+    """One row per (prompt_id, model): category (joined from the prompt suite — never
+    in the parquet/CSV), difficulty, per-dim scores, and overall_applicable_row.
+
+    category is looked up per row rather than assumed symmetric with the results
+    frame: a result whose prompt_id no longer exists in the suite gets category
+    "unknown" (warned, not dropped or crashed) — see architecture.md ghost-lane note.
+    """
+    meta: dict = {}
+    if os.path.exists(prompts_path):
+        with open(prompts_path, encoding="utf-8") as f:
+            meta = {p["id"]: p for p in json.load(f)}
+
+    categories = df["prompt_id"].map(lambda pid: meta.get(pid, {}).get("category"))
+    missing_mask = categories.isna()
+    if missing_mask.any():
+        missing_ids = sorted(df.loc[missing_mask, "prompt_id"].unique())
+        print(
+            f"WARNING: {len(missing_ids)} prompt_id(s) in {EVAL_RESULTS_PATH} not found "
+            f"in {prompts_path}; category set to 'unknown': {missing_ids}"
+        )
+    categories = categories.fillna("unknown")
+
+    applicable = df[HEADLINE_DIMS].apply(_row_headline_mean, axis=1)
+
+    out = pd.DataFrame({
+        "prompt_id": df["prompt_id"],
+        "category": categories,
+        "difficulty": df["difficulty"] if "difficulty" in df.columns else "",
+        "model": df["model"],
+    })
+    for dim in DIMENSIONS:
+        out[dim] = df[dim]
+    out["overall_applicable_row"] = applicable
+    out["judge_empty"] = df["judge_empty"] if "judge_empty" in df.columns else False
+    out["fallback_triggered"] = df["fallback_triggered"] if "fallback_triggered" in df.columns else False
+    out["latency_ms"] = df["latency_ms"]
+    return out
+
+
 def _publish_to_public(paths: list[str]) -> None:
     """Copy CSVs into public/data/ so the static frontend can fetch them.
     No-op if the destination directory doesn't exist (e.g. backend-only checkout)."""
@@ -294,8 +335,12 @@ def main() -> None:
     else:
         print("By-difficulty: skipped (no difficulty tags in input).")
 
+    by_prompt = export_by_prompt(df)
+    by_prompt.to_csv(RESULTS_BY_PROMPT_PATH, index=False)
+    print(f"By-prompt saved: {RESULTS_BY_PROMPT_PATH}  ({len(by_prompt)} rows)")
+
     _publish_to_public([LEADERBOARD_PATH, LEADERBOARD_BY_DIFF_PATH, JUDGE_CALIBRATION_PATH,
-                         JUDGE_AGREEMENT_PATH])
+                         JUDGE_AGREEMENT_PATH, RESULTS_BY_PROMPT_PATH])
     print_leaderboard(lb)
 
 

@@ -8,7 +8,7 @@ Source-of-truth doc. Reflects code as it exists, not the build summary's narrati
 kriterion/
 ├── batch_eval.py              # Daily runner; wires EvalOrchestrator + per-row parquet checkpoints
 ├── evaluator.py               # run_model() + score_response() — both route through call_model(); build_judge_user_message() shared with second_judge.py
-├── leaderboard.py             # eval_results.csv → leaderboard.csv (overall_applicable + overall_strict + CI)
+├── leaderboard.py             # eval_results.csv → leaderboard.csv (overall_applicable + overall_strict + CI) + results_by_prompt.csv (per-prompt×model export, category joined from prompt_suite.json)
 ├── calibration_probes.py      # Judge reliability runner: 32 anchor probes × 3 repeats → data/judge_calibration.csv
 ├── second_judge.py            # Offline re-scoring of a 300-pair deterministic sample by a 2nd judge → data/judge_agreement.csv
 ├── generate_prompts.py        # Emits prompts/prompt_suite.json (600 prompts, 6 cats × 100, difficulty-tagged)
@@ -26,7 +26,8 @@ kriterion/
 │   ├── test_fallback.py       # Mock OpenAI client — fallback triggers, retry_count, provider debit
 │   ├── test_retry.py          # Retry-After / X-RateLimit-Reset honoring, full-jitter backoff bounds, is_retryable classes, 4xx fail-fast, 5xx retry
 │   ├── test_calibration.py    # parse_judge_json round-trip, probe-suite validation, band-hit/parse-failure/test-retest-std aggregation (mocked)
-│   └── test_second_judge.py   # deterministic sampling, agreement math (Pearson/MAE/null-disagreement), message parity, judge2 HTB debit, resume (mocked)
+│   ├── test_second_judge.py   # deterministic sampling, agreement math (Pearson/MAE/null-disagreement), message parity, judge2 HTB debit, resume (mocked)
+│   └── test_export.py         # export_by_prompt(): row count, category join, NaN→empty cell, unknown-id warn-not-crash, HEADLINE_DIMS-only overall
 ├── prompts/
 │   ├── prompt_suite.json      # 600 prompts (6 cats × 100; each prompt tagged easy/medium/hard/expert at 15/25/35/25)
 │   └── calibration_probes.json # 32 anchor (prompt, response) pairs — 6 per dim (2 high/2 mid/2 low) × 5 dims + 2 null-checks
@@ -38,15 +39,15 @@ kriterion/
 ├── components.json            # shadcn-ui config
 ├── src/
 │   ├── main.tsx               # React root
-│   ├── App.tsx                # Routes: /, /rankings, /dimensions, /methods, /blog
+│   ├── App.tsx                # Routes: /, /rankings, /dimensions, /explorer, /methods, /blog
 │   ├── index.css
 │   ├── lib/
-│   │   ├── loadCsv.ts         # Fetch /data/leaderboard.csv + /data/leaderboard_by_difficulty.csv + /data/judge_calibration.csv + /data/judge_agreement.csv; FALLBACK_DATA on miss (calibration/agreement return [] on miss, no fallback data)
+│   │   ├── loadCsv.ts         # Fetch /data/leaderboard.csv + /data/leaderboard_by_difficulty.csv + /data/judge_calibration.csv + /data/judge_agreement.csv + /data/results_by_prompt.csv; FALLBACK_DATA on miss (calibration/agreement/results-by-prompt return [] on miss, no fallback data)
 │   │   ├── modelColors.ts     # Family-based color registry + modelDisplayName()
 │   │   └── utils.ts           # cn() helper
-│   ├── types/index.ts         # ModelPerformance + ModelDifficultyRow + JudgeCalibrationRow + JudgeAgreementRow interfaces
+│   ├── types/index.ts         # ModelPerformance + ModelDifficultyRow + JudgeCalibrationRow + JudgeAgreementRow + PromptResultRow interfaces
 │   ├── components/
-│   │   ├── pages/             # Overview, Rankings, Dimensions, Methods, Blog
+│   │   ├── pages/             # Overview, Rankings, Dimensions, Explorer, Methods, Blog
 │   │   ├── layout/            # PageFrame, Navbar, BottomLeft, BottomRight,
 │   │   │                      # CtaButton, ExpandableViz, GrainOverlay, ScrollableZone,
 │   │   │                      # ScrollToTop
@@ -57,11 +58,11 @@ kriterion/
 ├── lib/utils.ts               # cn() (duplicate path used by shadcn imports)
 ├── public/
 │   ├── background.webp
-│   └── data/                  # leaderboard.csv + leaderboard_by_difficulty.csv + judge_calibration.csv + judge_agreement.csv (if present), auto-published by leaderboard.py._publish_to_public()
+│   └── data/                  # leaderboard.csv + leaderboard_by_difficulty.csv + judge_calibration.csv + judge_agreement.csv (if present) + results_by_prompt.csv, auto-published by leaderboard.py._publish_to_public()
 └── docs/screenshots/overview.png
 ```
 
-Not in repo (would be produced by a run): `data/rows/*.parquet`, `data/eval_results.parquet`, `data/eval_results.csv`, `data/leaderboard.csv`, `data/leaderboard_by_difficulty.csv`, `data/judge_calibration.csv`, `data/calibration_runs.csv`, `data/judge2_rows/*.parquet`, `data/judge_agreement.csv`, `data/eval_state.json`, `data/eval_metadata.json`, `data/failed_calls.json`. (No `schedule_next_run.bat` — quota-exhaustion sleep is in-process; see §3.)
+Not in repo (would be produced by a run): `data/rows/*.parquet`, `data/eval_results.parquet`, `data/eval_results.csv`, `data/leaderboard.csv`, `data/leaderboard_by_difficulty.csv`, `data/judge_calibration.csv`, `data/calibration_runs.csv`, `data/judge2_rows/*.parquet`, `data/judge_agreement.csv`, `data/results_by_prompt.csv`, `data/eval_state.json`, `data/eval_metadata.json`, `data/failed_calls.json`. (No `schedule_next_run.bat` — quota-exhaustion sleep is in-process; see §3.)
 
 ## 2. MODEL CONFIG
 
@@ -299,18 +300,25 @@ Routes (src/App.tsx):
 | `/` | `Overview` | src/components/pages/Overview.tsx |
 | `/rankings` | `Rankings` | src/components/pages/Rankings.tsx |
 | `/dimensions` | `Dimensions` | src/components/pages/Dimensions.tsx |
+| `/explorer` | `Explorer` | src/components/pages/Explorer.tsx |
 | `/methods` | `Methods` | src/components/pages/Methods.tsx |
 | `/blog` | `Blog` | src/components/pages/Blog.tsx |
 
-Wrapped in `<PageFrame>` + `<AnimatePresence>` (motion). Suspense fallback `null`. Navbar items match the route list — five tabs (Overview / Rankings / Dimensions / Methods / Blog). `<Analytics />` from `@vercel/analytics/react` is mounted at the root of `App.tsx` (sibling to `<AnimatePresence>`, inside `<PageFrame>`) for production pageview telemetry on Vercel.
+Wrapped in `<PageFrame>` + `<AnimatePresence>` (motion). Suspense fallback `null`. Navbar items match the route list — six tabs (Overview / Rankings / Dimensions / Explorer / Methods / Blog). `<Analytics />` from `@vercel/analytics/react` is mounted at the root of `App.tsx` (sibling to `<AnimatePresence>`, inside `<PageFrame>`) for production pageview telemetry on Vercel.
 
 Layout components: `PageFrame`, `Navbar` (mobile collapses to hamburger), `BottomLeft`, `BottomRight`, `CtaButton`, `ExpandableViz`, `GrainOverlay`, `ScrollableZone`, `ScrollToTop` (mobile-only FAB mounted inside `ScrollableZone`).
 
 Chart components (active): `LeaderboardTable`, `PerformanceLatencyScatter`, `DifficultyBreakdown` (Rankings); `RadarComparison`, `DimensionDeepDive` (Dimensions).
 
+Explorer page (src/components/pages/Explorer.tsx):
+- Per-prompt drill-down fed by `loadResultsByPrompt()` (`/data/results_by_prompt.csv`, 1 row per prompt×model — 1,800 rows). Rows are grouped client-side into 600 per-prompt groups; `category`/`difficulty` filters and a "judge issues only" checkbox narrow the set, sorted by **spread** (max−min of the models' `overall` score, null-safe — the default, since disagreement is the interesting signal), Overall, or Prompt ID. Paginated 50/page (no virtualization).
+- Each row expands to prompt text + ground truth (joined client-side from the statically-imported `prompts/prompt_suite.json` — the CSV does not carry response text) and a 3-model × 5-dim score grid; `null` dims render as `"—"`, never `0`.
+- `results_by_prompt.csv` has no `category` column of its own — `leaderboard.py`'s `export_by_prompt()` joins it in from `prompt_suite.json` at export time (the parquet/CSV eval-results schema only carries `difficulty`).
+
 Data loading (src/lib/loadCsv.ts):
 - `loadLeaderboard()` fetches `/data/leaderboard.csv`, papaparse with `header:true, dynamicTyping:true, skipEmptyLines:true`. A `mapRow()` step maps the full CSV schema onto `ModelPerformance` — `rank`, `overall_applicable` → `overallScore`, `overall_strict`, `ci_low`/`ci_high`, every `avg_<dim>` including the new `avg_verbosity`, `avg_cost_per_prompt_usd`, **`latency_p50_ms`/`latency_p95_ms` (kept in ms — no `/1000`)**, `n_prompts`/`n_judge_empty`/`n_fallback`, and the six `cat_*` columns (`cat_safety_calibration` + `cat_hallucination_under_uncertainty` replace `cat_adversarial_edge_cases`). Rows missing `overall_applicable` are dropped. Returns `FALLBACK_DATA` only if zero rows survive mapping.
 - `loadLeaderboardByDifficulty()` fetches `/data/leaderboard_by_difficulty.csv` and maps each row onto `ModelDifficultyRow` (`model`, `difficulty`, `overallScore`, the five `avg_<dim>` fields, `nPrompts`). Returns `[]` on miss — the consuming chart unmounts cleanly.
+- `loadResultsByPrompt()` fetches `/data/results_by_prompt.csv` and maps each row onto `PromptResultRow` (`promptId`, `category`, `difficulty`, `model`, five nullable `<dim>` fields, `overall`, `judgeEmpty`, `fallbackTriggered`, `latencyMs`). Empty CSV cells are normalized to `null` explicitly (never coerced to `0`); `judge_empty`/`fallback_triggered` arrive from pandas as the strings `"True"`/`"False"`, which papaparse's `dynamicTyping` does not auto-convert — mapped explicitly. Returns `[]` on miss.
 - `loadEvalResults()` is an alias of `loadLeaderboard`.
 - `loadDimensions()` returns the hard-coded list `["Factuality", "Reasoning", "Instruction Following", "Format Compliance", "Verbosity"]`.
 - `FALLBACK_DATA` carries placeholder rows in the new 5-dim / 6-category shape. Real values populate after the first eval run + `leaderboard.py` mirrors the CSVs into `public/data/`.
@@ -339,7 +347,7 @@ Dev: `npm run dev` → `vite --port=3000 --host=0.0.0.0`. Build: `vite build`. L
 
 | Target | What | How |
 |---|---|---|
-| Vercel | React static site | GitHub-integrated. `vercel.json` rewrites every path to `/index.html` so React Router handles direct nav. Runtime fetch of `/data/leaderboard.csv` and `/data/leaderboard_by_difficulty.csv` — both auto-mirrored into `public/data/` by `leaderboard.py._publish_to_public()`. `@vercel/analytics` is wired at the App root. **Auto-deploy off `main` is currently gated** via `vercel.json` `"git": {"deploymentEnabled": {"main": false}}` — pushes to `main` are ignored by Vercel until the flag is flipped back to `true`. This gates the in-flight 5-dim revision so the deployed site keeps the prior schema until the multi-day eval run completes and the new CSVs are validated. To re-enable: change `false` → `true`, commit, push. |
+| Vercel | React static site | GitHub-integrated. `vercel.json` rewrites every path to `/index.html` so React Router handles direct nav. Runtime fetch of `/data/leaderboard.csv`, `/data/leaderboard_by_difficulty.csv`, and `/data/results_by_prompt.csv` — all auto-mirrored into `public/data/` by `leaderboard.py._publish_to_public()`. `@vercel/analytics` is wired at the App root. **Auto-deploy off `main` is currently gated** via `vercel.json` `"git": {"deploymentEnabled": {"main": false}}` — pushes to `main` are ignored by Vercel until the flag is flipped back to `true`. This gates the in-flight 5-dim revision so the deployed site keeps the prior schema until the multi-day eval run completes and the new CSVs are validated. To re-enable: change `false` → `true`, commit, push. |
 | Local Windows | Python eval harness | `python batch_eval.py [-y]`. In-process quota-sleep loop survives reset boundary; no external scheduler. New status-display blocks (quota-exhausted box, wake-tick heartbeat, resume banner, completion box) print to stdout — see §3.6. A bounded patient multi-pass sweep (§3.8) auto-retries transient-429 tails with widening inter-pass gaps, so a single invocation drives the remainder to completion without manual re-runs. |
 
 Env vars:
@@ -375,6 +383,7 @@ Pending items:
 
 Resolved since the prior revision (no longer gaps):
 
+- **Per-prompt Explorer shipped.** `leaderboard.py` gained `export_by_prompt()` → `data/results_by_prompt.csv` (1,800 rows, category joined from `prompt_suite.json`); new `/explorer` route (`Explorer.tsx`) renders it as a filterable, paginated, expandable per-prompt table. Zero API cost — built entirely from already-scored data. Uses existing v1 schema (no `response_text`; that lands with the v2 re-run). 80/80 tests pass, `tsc --noEmit` clean, `vite build` clean, the two existing leaderboard CSVs regenerate byte-identical. See §5.
 - **Transient-429 tail no longer requires manual re-runs.** A ~4% tail (67/1800) of pairs — mostly `kimi-k2.6` evals whose only fallback `gemma-4-26b` lands on an also-throttled `google` leaf — was stuck on *transient* upstream 429s (`"…temporarily rate-limited upstream"`, **not** the `free-models-per-day` daily cap, and HTB budgets were nowhere near exhausted). Such errors don't trigger the §3.6 quota-sleep/requeue; they're logged to `failed_calls.json` and dropped, and a single immediate re-run hits the same instantaneous throttle. Fix (confined to `batch_eval.main` — no architecture change): a bounded patient multi-pass sweep that recomputes the still-missing pairs from disk after each pass and re-runs the existing orchestrator over the remainder with widening inter-pass gaps (5/15/30 min, 4 passes max) so the upstream throttle can clear. See §3.8. 36/36 tests still pass. **The tail is now fully drained — all 1800 pairs are evaluated and `leaderboard.py` has been re-run over the complete set; only the production redeploy remains (see Pending items above).**
 - **Consolidation no longer bloats the parquet.** `consolidate_rows_to_parquet()` previously re-read the existing `eval_results.parquet` *and* re-appended all per-row files on every run, with no de-dup — so each consolidation grew the file by ~one full pass. A real 1,800-pair run had ballooned to **10,624 rows** across `day_of_run` 1–4, which inflated `n_prompts` to ~3,500/model and artificially tightened the bootstrap CIs (resampling over ~6× the true sample). Fix: rebuild from `ROWS_DIR` only (the canonical latest-per-pair checkpoints) plus a defensive `(prompt_id, model)` de-dup, so consolidation is now idempotent at exactly 1,800 rows. The published CSVs were regenerated from the rebuilt parquet. 36/36 tests still pass.
 - Empty-judge handling now NaN-s all four dims and sets `judge_empty=True` — matches the original intent.

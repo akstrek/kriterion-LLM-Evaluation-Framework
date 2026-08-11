@@ -8,6 +8,7 @@ const NAV_LINKS = [
   { name: "Overview", path: "/" },
   { name: "Rankings", path: "/rankings" },
   { name: "Dimensions", path: "/dimensions" },
+  { name: "Explorer", path: "/explorer" },
   { name: "Methods", path: "/methods" },
   { name: "Blog", path: "/blog" },
 ];
