@@ -453,6 +453,41 @@ def _dedup_latest_pair(table: "pa.Table") -> "pa.Table":
 
 # ── Failed calls log ──────────────────────────────────────────────────────────
 
+def rotate_failed_calls_if_fresh(is_resume: bool) -> None:
+    """Rotate a pre-existing, non-empty failed_calls.json out of the way at the
+    start of a fresh run (no completed pairs yet), so the new run's failure
+    log starts clean instead of growing unbounded across every prior run
+    (394 KB / 721 entries after one run, never trimmed — dilutes
+    retune_weights.py's pressure signal). On resume, the file is left in
+    place untouched — the current run's history must stay whole.
+
+    `is_resume` must be the caller's own `len(completed_pairs) > 0` — the
+    same signal the resume banner uses — passed in rather than recomputed,
+    so the two can never disagree."""
+    if is_resume or not os.path.exists(FAILED_PATH):
+        return
+    try:
+        with open(FAILED_PATH, encoding="utf-8") as f:
+            content = json.load(f)
+        is_empty = isinstance(content, list) and len(content) == 0
+    except Exception:
+        is_empty = False  # unreadable — rotate it aside rather than risk losing it
+
+    if is_empty:
+        return
+
+    os.makedirs(DATA_DIR, exist_ok=True)
+    date_str = datetime.datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    dest = os.path.join(DATA_DIR, f"failed_calls_{date_str}.json")
+    suffix = 0
+    while os.path.exists(dest):
+        suffix += 1
+        dest = os.path.join(DATA_DIR, f"failed_calls_{date_str}_{suffix}.json")
+    os.replace(FAILED_PATH, dest)
+    print(f"  Rotated prior failed_calls.json -> {dest} (fresh run starts a clean log)",
+          flush=True)
+
+
 def append_failed_call(entry: dict) -> None:
     os.makedirs(DATA_DIR, exist_ok=True)
     existing: list[dict] = []
@@ -769,6 +804,8 @@ def main() -> None:
     prompts         = load_prompts()
     state           = load_state()
     completed_pairs = load_completed_pairs()
+    is_resume       = len(completed_pairs) > 0
+    rotate_failed_calls_if_fresh(is_resume)
 
     key_info_start = fetch_key_info()
     if key_info_start is not None and "credits_at_start" not in state:
@@ -814,7 +851,7 @@ def main() -> None:
         _print_completion_box(state, len(completed_pairs), total_pairs)
         return
 
-    if len(completed_pairs) > 0:
+    if is_resume:
         state["resume_events"] += 1
         save_state(state)
 
